@@ -1,4 +1,4 @@
-# Tiny event sourcing library
+# Template for the HighLoad course
 This project is based on [Tiny Event Sourcing library](https://github.com/andrsuh/tiny-event-sourcing)
 
 ### Run MongoDb
