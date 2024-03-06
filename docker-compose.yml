@@ -2,8 +2,8 @@ version: "3.9"
 services:
   mongo:
     build:
-#      context: mongoDb
-      dockerfile: mongoDb/Dockerfile
+      context: mongoDb
+      dockerfile: Dockerfile
     restart: always
     ports:
       - 27017:27017
