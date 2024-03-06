@@ -2,6 +2,7 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.delay
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,10 +13,9 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 
 
 // Advice: always treat time as a Duration
@@ -37,6 +37,8 @@ class PaymentExternalServiceImpl(
             it.toAccountProcessingInfo()
         }
 
+    private val waitDuration = Duration.ofSeconds(1)
+
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
@@ -49,19 +51,17 @@ class PaymentExternalServiceImpl(
 
     private fun getAccountProcessingInfo(paymentStartedAt: Long): AccountProcessingInfo {
         while (true) {
-            val curFirstCounter = accountProcessingInfos[0].requestCounter.get()
-            val curSecondCounter = accountProcessingInfos[1].requestCounter.get()
-            if (curSecondCounter >= accountProcessingInfos[1].parallelRequests
-                || Duration.ofMillis(now() - paymentStartedAt) > accountProcessingInfos[1].request95thPercentileProcessingTime
-            ) {
-                if (curFirstCounter < accountProcessingInfos[0].parallelRequests) {
-                    if (accountProcessingInfos[0].requestCounter.compareAndSet(curFirstCounter, curFirstCounter + 1)) {
-                        return accountProcessingInfos[0]
+            for (accountProcessingInfo in accountProcessingInfos) {
+                val waitStartTime = now()
+                while (Duration.ofMillis(now() - waitStartTime) <= waitDuration) {
+                    val curRequestCount = accountProcessingInfo.requestCounter.get()
+                    if (curRequestCount < accountProcessingInfo.parallelRequests &&
+                        Duration.ofMillis(now() - paymentStartedAt) <=
+                        Duration.ofMillis(paymentOperationTimeout.toMillis() - accountProcessingInfo.request95thPercentileProcessingTime.toMillis() * 2)) {
+                        if (accountProcessingInfo.requestCounter.compareAndSet(curRequestCount, curRequestCount + 1)) {
+                            return accountProcessingInfo
+                        }
                     }
-                }
-            } else {
-                if (accountProcessingInfos[1].requestCounter.compareAndSet(curSecondCounter, curSecondCounter + 1)) {
-                    return accountProcessingInfos[1]
                 }
             }
         }
@@ -80,7 +80,8 @@ class PaymentExternalServiceImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        if (Duration.ofMillis(now() - paymentStartedAt) > paymentOperationTimeout) {
+        if (Duration.ofMillis(now() - paymentStartedAt) > paymentOperationTimeout
+            || accountProcessingInfo.requestCounter.get() > accountProcessingInfo.parallelRequests) {
             accountProcessingInfo.requestCounter.decrementAndGet()
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
