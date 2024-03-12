@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.config.AccountBalancer
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -18,7 +19,7 @@ import java.util.concurrent.Executors
 
 // Advice: always treat time as a Duration
 class PaymentExternalServiceImpl(
-    private val properties: ExternalServiceProperties,
+    private val accountBalancer: AccountBalancer
 ) : PaymentExternalService {
 
     companion object {
@@ -30,11 +31,11 @@ class PaymentExternalServiceImpl(
         val mapper = ObjectMapper().registerKotlinModule()
     }
 
-    private val serviceName = properties.serviceName
-    private val accountName = properties.accountName
-    private val requestAverageProcessingTime = properties.request95thPercentileProcessingTime
-    private val rateLimitPerSec = properties.rateLimitPerSec
-    private val parallelRequests = properties.parallelRequests
+//    private val serviceName = properties.serviceName
+//    private val accountName = properties.accountName
+//    private val requestAverageProcessingTime = properties.request95thPercentileProcessingTime
+//    private val rateLimitPerSec = properties.rateLimitPerSec
+//    private val parallelRequests = properties.parallelRequests
 
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
@@ -47,10 +48,13 @@ class PaymentExternalServiceImpl(
     }
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
+
+        val account = accountBalancer.getAccount()
+
+        logger.warn("[${account.accountName}] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
 
         val transactionId = UUID.randomUUID()
-        logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
+        logger.info("[${account.accountName}] Submit for $paymentId , txId: $transactionId")
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -59,7 +63,7 @@ class PaymentExternalServiceImpl(
         }
 
         val request = Request.Builder().run {
-            url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId")
+            url("http://localhost:1234/external/process?serviceName=${account.serviceName}&accountName=${account.accountName}&transactionId=$transactionId")
             post(emptyBody)
         }.build()
 
@@ -68,17 +72,19 @@ class PaymentExternalServiceImpl(
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                    logger.error("[${account.accountName}] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
                     ExternalSysResponse(false, e.message)
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                logger.warn("[${account.accountName}] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                 // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
                 paymentESService.update(paymentId) {
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
+
+                accountBalancer.resize(account)
             }
         } catch (e: Exception) {
             when (e) {
@@ -89,7 +95,10 @@ class PaymentExternalServiceImpl(
                 }
 
                 else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                    logger.error(
+                        "[${account.accountName}] Payment failed for txId: $transactionId, payment: $paymentId",
+                        e
+                    )
 
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = e.message)
@@ -100,4 +109,4 @@ class PaymentExternalServiceImpl(
     }
 }
 
-public fun now() = System.currentTimeMillis()
+fun now() = System.currentTimeMillis()
