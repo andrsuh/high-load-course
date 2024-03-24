@@ -6,7 +6,7 @@ import ru.quipy.warehouse.api.*
 import java.util.*
 
 class ProductAggregateState : AggregateState<UUID, ProductAggregate> {
-    private lateinit var productId: UUID
+    lateinit var productId: UUID
     var createdAt: Long = System.currentTimeMillis()
     var updatedAt: Long = System.currentTimeMillis()
 

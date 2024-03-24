@@ -7,7 +7,7 @@ import ru.quipy.orders.logic.OrderStatus.*
 import java.util.*
 
 class OrderAggregateState : AggregateState<UUID, OrderAggregate> {
-    private lateinit var orderId: UUID
+    lateinit var orderId: UUID
 
     lateinit var userId: UUID
 

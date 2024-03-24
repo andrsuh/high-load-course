@@ -7,7 +7,7 @@ import ru.quipy.domain.AggregateState
 import java.util.*
 
 class DeliveryAggregateState : AggregateState<UUID, DeliveryAggregate> {
-    private lateinit var deliveryId: UUID
+    lateinit var deliveryId: UUID
     var deliveryDuration: Long? = null
     var createdAt: Long = System.currentTimeMillis()
     var updatedAt: Long = System.currentTimeMillis()
