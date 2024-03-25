@@ -45,5 +45,7 @@ class OngoingWindow(
         window.acquire()
     }
 
+    fun tryAcquire() = window.tryAcquire()
+
     fun release() = window.release()
 }

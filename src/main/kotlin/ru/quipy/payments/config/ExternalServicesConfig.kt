@@ -1,10 +1,13 @@
 package ru.quipy.payments.config
 
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import ru.quipy.payments.logic.ExternalServiceProperties
-import ru.quipy.payments.logic.PaymentExternalServiceImpl
+import ru.quipy.core.EventSourcingService
+import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.logic.*
 import java.time.Duration
+import java.util.*
 
 
 @Configuration
@@ -52,9 +55,14 @@ class ExternalServicesConfig {
         )
     }
 
+    @Autowired
+    private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
+
     @Bean(PRIMARY_PAYMENT_BEAN)
-    fun fastExternalService() =
-        PaymentExternalServiceImpl(
-            accountProps_4,
-        )
+    fun fastExternalService(): PaymentService {
+        val service2 = PaymentExternalServiceImpl(paymentESService, accountProps_2)
+        val service1 = PaymentExternalServiceImpl(paymentESService, accountProps_1)
+        service2.setNext(service1)
+        return service2
+    }
 }
