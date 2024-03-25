@@ -1,13 +1,60 @@
 version: "3.9"
+
 services:
   mongo:
     build:
-#      context: mongoDb
+      #      context: mongoDb
       dockerfile: mongoDb/Dockerfile
     restart: always
     ports:
       - 27017:27017
     volumes:
       - mongo_data:/data/db
+
+  bombardier:
+    platform: linux/x86_64
+    image: ghcr.io/andrsuh/bombardier:${BOMBARDIER_VERSION:-latest}
+    ports:
+      - "1234:1234"
+    restart: unless-stopped
+    networks:
+      - external_network
+    environment:
+      - TEST_SERVICE_IP=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  prometheus:
+    image: quay.io/prometheus/prometheus:v2.32.0
+    volumes:
+      - ./prometheus/data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "9090:9090"
+    networks:
+      - external_network
+
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - ./grafana/data:/var/lib/grafana
+      - ./grafana/provisioning/:/etc/grafana/provisioning/
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=quipy
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - 3000:3000
+    depends_on:
+      - prometheus
+    networks:
+      - external_network
+
+networks:
+  external_network:
+    driver: bridge
+
 volumes:
   mongo_data: { }
