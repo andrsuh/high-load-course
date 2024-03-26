@@ -55,6 +55,6 @@ class ExternalServicesConfig {
     @Bean(PRIMARY_PAYMENT_BEAN)
     fun fastExternalService() =
         PaymentExternalServiceImpl(
-            accountProps_4,
+            listOf(accountProps_2, accountProps_1)
         )
 }

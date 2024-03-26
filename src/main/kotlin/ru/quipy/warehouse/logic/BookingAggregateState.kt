@@ -9,7 +9,7 @@ class BookingAggregateState : AggregateState<UUID, BookingAggregate> {
     lateinit var bookingId: UUID
     var createdAt: Long = System.currentTimeMillis()
     var updatedAt: Long = System.currentTimeMillis()
-    var state = BookingState.CRETAED
+    var state = BookingState.CREATED
 
     lateinit var orderId: UUID
     var products: List<BookProductRequest> = listOf()
@@ -64,7 +64,7 @@ data class FailedProduct(
 )
 
 enum class BookingState {
-    CRETAED,
+    CREATED,
     SUCCESS,
     FAILED,
     CANCELLED,
