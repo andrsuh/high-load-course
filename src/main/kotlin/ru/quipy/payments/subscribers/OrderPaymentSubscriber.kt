@@ -1,5 +1,10 @@
 package ru.quipy.payments.subscribers
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -36,13 +41,13 @@ class OrderPaymentSubscriber {
     @Qualifier(ExternalServicesConfig.PRIMARY_PAYMENT_BEAN)
     private lateinit var paymentService: PaymentService
 
-    private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
+    private val paymentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @PostConstruct
     fun init() {
         subscriptionsManager.createSubscriber(OrderAggregate::class, "payments:order-subscriber", retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)) {
             `when`(OrderPaymentStartedEvent::class) { event ->
-                paymentExecutor.submit {
+                paymentScope.launch {
                     val createdEvent = paymentESService.create {
                         it.create(
                             event.paymentId,
