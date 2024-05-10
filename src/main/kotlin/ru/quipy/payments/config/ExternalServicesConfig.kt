@@ -14,55 +14,65 @@ class ExternalServicesConfig {
         // Ниже приведены готовые конфигурации нескольких аккаунтов провайдера оплаты.
         // Заметьте, что каждый аккаунт обладает своими характеристиками и стоимостью вызова.
 
-        private val accountProps_0 = ExternalServiceProperties(
-            "test",
-            "default-0",
-            parallelRequests = 100000,
-            rateLimitPerSec = 1000,
-            price = 100, // most expensive. Call costs 100
-            averageProcessingTime = Duration.ofMillis(50_000),
-            enabled = true,
-        )
-
         private val accountProps_1 = ExternalServiceProperties(
             "test",
             "default-1",
-            parallelRequests = 10000,
+            parallelRequests = 2000,
             rateLimitPerSec = 100,
             price = 100, // most expensive. Call costs 100
-            averageProcessingTime = Duration.ofMillis(1000),
-            enabled = true,
+            averageProcessingTime = Duration.ofMillis(40_000),
+            enabled = false,
         )
 
         private val accountProps_2 = ExternalServiceProperties(
             "test",
             "default-2",
             parallelRequests = 100,
-            rateLimitPerSec = 30,
+            rateLimitPerSec = 10,
             price = 70, // Call costs 70
-            averageProcessingTime = Duration.ofMillis(2_000),
-            enabled = true,
+            averageProcessingTime = Duration.ofMillis(10_000),
+            enabled = false,
         )
 
         private val accountProps_3 = ExternalServiceProperties(
             "test",
             "default-3",
-            parallelRequests = 30,
-            rateLimitPerSec = 8,
+            parallelRequests = 32,
+            rateLimitPerSec = 2,
             price = 40, // Call costs 40
-            averageProcessingTime = Duration.ofMillis(3_000),
-            enabled = true,
+            averageProcessingTime = Duration.ofMillis(16_000),
+            enabled = false,
         )
 
         // Call costs 30
         private val accountProps_4 = ExternalServiceProperties(
             "test",
             "default-4",
-            parallelRequests = 8,
+            parallelRequests = 15,
             rateLimitPerSec = 5,
             price = 40, // Call costs 40
-            averageProcessingTime = Duration.ofMillis(3_000),
+            averageProcessingTime = Duration.ofMillis(15_000),
             enabled = true,
+        )
+
+        private val accountProps_5 = ExternalServiceProperties(
+            "test",
+            "default-5",
+            parallelRequests = 10,
+            rateLimitPerSec = 8,
+            price = 40, // Call costs 40
+            averageProcessingTime = Duration.ofMillis(10_000),
+            enabled = false,
+        )
+
+        private val accountProps_6 = ExternalServiceProperties(
+            "test",
+            "default-6",
+            parallelRequests = 35,
+            rateLimitPerSec = 30,
+            price = 40, // Call costs 40
+            averageProcessingTime = Duration.ofMillis(1_000),
+            enabled = false,
         )
     }
 
