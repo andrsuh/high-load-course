@@ -46,4 +46,6 @@ class OngoingWindow(
     }
 
     fun release() = window.release()
+
+    fun awaitingQueueSize() = window.queueLength
 }

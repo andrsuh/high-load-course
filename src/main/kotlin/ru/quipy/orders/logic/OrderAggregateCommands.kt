@@ -6,10 +6,11 @@ import java.util.*
 import kotlin.random.Random
 
 
-fun OrderAggregateState.create(id: UUID, userId: UUID): OrderCreatedEvent {
+fun OrderAggregateState.create(id: UUID, userId: UUID, amount: Int): OrderCreatedEvent {
     return OrderCreatedEvent(
         orderId = id,
         userId = userId,
+        amount = amount
     )
 }
 

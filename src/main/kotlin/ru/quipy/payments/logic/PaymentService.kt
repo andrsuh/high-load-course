@@ -5,12 +5,26 @@ import java.util.*
 
 interface PaymentService {
     /**
-     * Submit payment request to external service.
+     * Submit payment request to some external service.
      */
     fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long)
 }
 
-interface PaymentExternalService : PaymentService
+/**
+ * Adapter for external payment system. Represents the account in the external system.
+ *
+ * !!! You can extend the interface with additional methods if needed. !!!
+
+ */
+interface PaymentExternalSystemAdapter {
+    fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long)
+
+    fun name(): String
+
+    fun price(): Int
+
+    fun isEnabled(): Boolean
+}
 
 /**
  * Describes properties of payment-provider accounts.
@@ -20,7 +34,9 @@ data class ExternalServiceProperties(
     val accountName: String,
     val parallelRequests: Int,
     val rateLimitPerSec: Int,
-    val request95thPercentileProcessingTime: Duration = Duration.ofSeconds(11)
+    val price: Int,
+    val averageProcessingTime: Duration = Duration.ofSeconds(11),
+    val enabled: Boolean,
 )
 
 /**

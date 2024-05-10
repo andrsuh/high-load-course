@@ -16,10 +16,11 @@ import ru.quipy.orders.projection.OrderCache
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.payments.projections.FinancialLogRepository
+import ru.quipy.payments.subscribers.PaymentTransactionsSubscriber
+import ru.quipy.payments.subscribers.PaymentTransactionsSubscriber.PaymentLogRecord
 import ru.quipy.warehouse.api.BookingAggregate
 import ru.quipy.warehouse.api.ProductAggregate
 import ru.quipy.warehouse.logic.BookingAggregateState
-import ru.quipy.warehouse.logic.BookingState
 import ru.quipy.warehouse.logic.ProductAggregateState
 import ru.quipy.warehouse.projections.BookingLogRepository
 import ru.quipy.warehouse.projections.ProductBalanceRepository
@@ -58,6 +59,9 @@ class APIController {
     @Autowired
     private lateinit var orderCache: OrderCache
 
+    @Autowired
+    private lateinit var paymentsLog: PaymentTransactionsSubscriber
+
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
         return User(UUID.randomUUID(), req.name)
@@ -68,8 +72,8 @@ class APIController {
     data class User(val id: UUID, val name: String)
 
     @PostMapping("/orders")
-    fun createOrder(@RequestParam userId: UUID): Order {
-        val event = ordersESService.create { it.create(UUID.randomUUID(), userId) }
+    fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+        val event = ordersESService.create { it.create(UUID.randomUUID(), userId, price) }
         return Order(
             event.orderId,
             event.userId,
@@ -93,7 +97,7 @@ class APIController {
             state.shoppingCart.items.associate { it.productId to it.amount },
             state.deliveryId,
             state.deliveryId?.let { getDeliveryDuration(it) },
-            state.paymentId?.let { getPaymentInfo(it) } ?: emptyList()
+            getPaymentInfo(orderId)
         )
     }
 
@@ -103,19 +107,8 @@ class APIController {
         return deliveryAggregateState.deliveryDuration
     }
 
-    private fun getPaymentInfo(paymentId: UUID): List<PaymentLogRecord> {
-        val payment = paymentESService.getState(paymentId) ?: return emptyList()
-
-        if (payment.processings.isEmpty()) return emptyList()
-
-        return payment.processings.values.map {
-            PaymentLogRecord(
-                it.processedAt,
-                status = if (it.success) PaymentStatus.SUCCESS else PaymentStatus.FAILED,
-                payment.amount!!,
-                paymentId
-            )
-        }
+    private fun getPaymentInfo(orderId: UUID): List<PaymentLogRecord> {
+        return paymentsLog.paymentLog[orderId] ?: emptyList()
     }
 
     data class Order(
@@ -128,18 +121,6 @@ class APIController {
         val deliveryDuration: Long? = null,
         val paymentHistory: List<PaymentLogRecord>
     )
-
-    class PaymentLogRecord(
-        val timestamp: Long,
-        val status: PaymentStatus,
-        val amount: Int,
-        val transactionId: UUID,
-    )
-
-    enum class PaymentStatus {
-        FAILED,
-        SUCCESS
-    }
 
     data class OrderItem(
         val id: UUID,

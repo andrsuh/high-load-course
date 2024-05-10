@@ -29,6 +29,7 @@ class OrderAggregateState : AggregateState<UUID, OrderAggregate> {
     fun orderCreatedApply(event: OrderCreatedEvent) {
         orderId = event.orderId
         userId = event.userId
+        priceToPay = event.amount
         updatedAt = createdAt
     }
 

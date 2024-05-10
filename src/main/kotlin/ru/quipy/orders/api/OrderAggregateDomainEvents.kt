@@ -20,6 +20,7 @@ class OrderCreatedEvent(
     val orderId: UUID,
     val userId: UUID,
     createdAt: Long = System.currentTimeMillis(),
+    val amount: Int?,
 ) : Event<OrderAggregate>(
     name = ORDER_CREATED_EVENT,
     createdAt = createdAt,

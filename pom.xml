@@ -17,7 +17,7 @@
 
 	<properties>
         <kotlin.version>1.9.0</kotlin.version>
-        <tiny.es.version>2.5.0</tiny.es.version>
+        <tiny.es.version>2.6.3</tiny.es.version>
         <resilience4jVersion>2.2.0</resilience4jVersion>
     </properties>
 
@@ -86,7 +86,7 @@
 
         <dependency>
             <groupId>ru.quipy</groupId>
-            <artifactId>tiny-mongo-event-store-spring-boot-starter</artifactId>
+            <artifactId>tiny-postgres-event-store-spring-boot-starter</artifactId>
             <version>${tiny.es.version}</version>
         </dependency>
     </dependencies>

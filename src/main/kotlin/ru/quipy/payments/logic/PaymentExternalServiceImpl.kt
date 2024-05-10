@@ -17,14 +17,12 @@ import java.util.concurrent.Executors
 
 
 // Advice: always treat time as a Duration
-class PaymentExternalServiceImpl(
+class PaymentExternalSystemAdapterImpl(
     private val properties: ExternalServiceProperties,
-) : PaymentExternalService {
+) : PaymentExternalSystemAdapter {
 
     companion object {
-        val logger = LoggerFactory.getLogger(PaymentExternalServiceImpl::class.java)
-
-        val paymentOperationTimeout = Duration.ofSeconds(80)
+        val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
@@ -32,7 +30,7 @@ class PaymentExternalServiceImpl(
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
-    private val requestAverageProcessingTime = properties.request95thPercentileProcessingTime
+    private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
@@ -46,7 +44,7 @@ class PaymentExternalServiceImpl(
         build()
     }
 
-    override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
+    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
 
         val transactionId = UUID.randomUUID()
@@ -98,6 +96,13 @@ class PaymentExternalServiceImpl(
             }
         }
     }
+
+    override fun price() = properties.price
+
+    override fun isEnabled() = properties.enabled
+
+    override fun name() = properties.accountName
+
 }
 
 public fun now() = System.currentTimeMillis()
