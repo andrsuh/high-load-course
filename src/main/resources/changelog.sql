@@ -1,6 +1,8 @@
 --liquibase formatted sql
 --changeset vekajp:es-001
 
+create schema if not exists event_sourcing_store;
+
 create sequence if not exists event_sourcing_store.event_record_created_at_sequence;
 create table if not exists event_sourcing_store.event_record
 (
