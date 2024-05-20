@@ -30,7 +30,6 @@ class ExternalServicesConfig {
             parallelRequests = 100,
             rateLimitPerSec = 10,
             price = 70, // Call costs 70
-            averageProcessingTime = Duration.ofMillis(10_000),
             enabled = false,
         )
 
@@ -58,8 +57,8 @@ class ExternalServicesConfig {
         private val accountProps_5 = ExternalServiceProperties(
             "test",
             "default-5",
-            parallelRequests = 10,
-            rateLimitPerSec = 8,
+            parallelRequests = 8,
+            rateLimitPerSec = 10,
             price = 40, // Call costs 40
             averageProcessingTime = Duration.ofMillis(10_000),
             enabled = false,
