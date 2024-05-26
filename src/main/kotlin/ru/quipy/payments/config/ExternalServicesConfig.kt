@@ -21,7 +21,7 @@ class ExternalServicesConfig {
             rateLimitPerSec = 100,
             price = 100, // most expensive. Call costs 100
             averageProcessingTime = Duration.ofMillis(40_000),
-            enabled = false,
+            enabled = true,
         )
 
         private val accountProps_2 = ExternalServiceProperties(
@@ -52,7 +52,7 @@ class ExternalServicesConfig {
             rateLimitPerSec = 5,
             price = 40, // Call costs 40
             averageProcessingTime = Duration.ofMillis(15_000),
-            enabled = true,
+            enabled = false,
         )
 
         private val accountProps_5 = ExternalServiceProperties(
@@ -77,5 +77,15 @@ class ExternalServicesConfig {
     }
 
     @Bean
-    fun externalService2() = PaymentExternalSystemAdapterImpl(accountProps_4)
+    fun externalService1() = PaymentExternalSystemAdapterImpl(accountProps_1)
+    @Bean
+    fun externalService2() = PaymentExternalSystemAdapterImpl(accountProps_2)
+    @Bean
+    fun externalService3() = PaymentExternalSystemAdapterImpl(accountProps_3)
+    @Bean
+    fun externalService4() = PaymentExternalSystemAdapterImpl(accountProps_4)
+    @Bean
+    fun externalService5() = PaymentExternalSystemAdapterImpl(accountProps_5)
+    @Bean
+    fun externalService6() = PaymentExternalSystemAdapterImpl(accountProps_6)
 }
