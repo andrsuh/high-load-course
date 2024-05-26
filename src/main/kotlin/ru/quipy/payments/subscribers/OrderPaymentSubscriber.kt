@@ -33,7 +33,7 @@ class OrderPaymentSubscriber {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-submission-executor"))
+    private val paymentExecutor = Executors.newFixedThreadPool(1, NamedThreadFactory("payment-planner"))
 
     @PostConstruct
     fun init() {
