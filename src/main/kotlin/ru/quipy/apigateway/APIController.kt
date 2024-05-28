@@ -13,9 +13,11 @@ import ru.quipy.delivery.logic.create
 import ru.quipy.orders.api.OrderAggregate
 import ru.quipy.orders.logic.*
 import ru.quipy.orders.projection.OrderCache
+import ru.quipy.orders.projection.OrderRepository
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.payments.projections.FinancialLogRepository
+import ru.quipy.payments.subscribers.OrderPayer
 import ru.quipy.payments.subscribers.PaymentTransactionsSubscriber
 import ru.quipy.payments.subscribers.PaymentTransactionsSubscriber.PaymentLogRecord
 import ru.quipy.warehouse.api.BookingAggregate
@@ -62,6 +64,12 @@ class APIController {
     @Autowired
     private lateinit var paymentsLog: PaymentTransactionsSubscriber
 
+    @Autowired
+    private lateinit var orderRepository: OrderRepository
+
+    @Autowired
+    private lateinit var orderPayer: OrderPayer
+
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
         return User(UUID.randomUUID(), req.name)
@@ -73,44 +81,24 @@ class APIController {
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
-        val event = ordersESService.create { it.create(UUID.randomUUID(), userId, price) }
-        return Order(
-            event.orderId,
-            event.userId,
-            event.createdAt,
+        val order = Order(
+            UUID.randomUUID(),
+            userId,
+            System.currentTimeMillis(),
             OrderStatus.COLLECTING,
             emptyMap(),
             null,
             null,
+            price,
             emptyList()
         )
+        return orderRepository.save(order)
     }
 
     @GetMapping("/orders/{orderId}")
     suspend fun getOrder(@PathVariable orderId: UUID): Order {
-        val state = orderCache.getOrderState(orderId) ?: throw IllegalArgumentException("No such order $orderId")
-        return Order(
-            state.getId(),
-            state.userId,
-            state.createdAt,
-            state.status,
-            state.shoppingCart.items.associate { it.productId to it.amount },
-            state.deliveryId,
-            state.deliveryId?.let { getDeliveryDuration(it) },
-            getPaymentInfo(orderId)
-        )
+        return orderRepository.findById(orderId) ?: throw IllegalArgumentException("No such order $orderId")
     }
-
-    private fun getDeliveryDuration(deliveryId: UUID): Long? {
-        val deliveryAggregateState =
-            deliveryESService.getState(deliveryId) ?: throw IllegalArgumentException("No such delivery $deliveryId")
-        return deliveryAggregateState.deliveryDuration
-    }
-
-    private fun getPaymentInfo(orderId: UUID): List<PaymentLogRecord> {
-        return paymentsLog.paymentLog[orderId] ?: emptyList()
-    }
-
     data class Order(
         val id: UUID,
         val userId: UUID,
@@ -119,7 +107,8 @@ class APIController {
         val itemsMap: Map<UUID, Int>,
         val deliveryId: UUID? = null,
         val deliveryDuration: Long? = null,
-        val paymentHistory: List<PaymentLogRecord>
+        val price: Int,
+        val paymentHistory: List<PaymentLogRecord> = mutableListOf()
     )
 
     data class OrderItem(
@@ -195,12 +184,15 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID): PaymentSubmissionDto {
-        val paymentCreated = ordersESService.update(orderId) {
-            it.startPayment()
-        }.also {
-            orderCache.invalidateOrderState(orderId)
-        }
-        return PaymentSubmissionDto(paymentCreated.createdAt, paymentCreated.paymentId)
+        val paymentId = UUID.randomUUID()
+        val order = orderRepository.findById(orderId)?.let {
+            orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
+            it
+        } ?: throw IllegalArgumentException("No such order $orderId")
+
+
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId)
+        return  PaymentSubmissionDto(createdAt, paymentId)
     }
 
     class PaymentSubmissionDto(
