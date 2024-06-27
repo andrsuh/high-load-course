@@ -17,7 +17,7 @@
 
 	<properties>
         <kotlin.version>1.9.0</kotlin.version>
-        <tiny.es.version>2.7.1</tiny.es.version>
+        <tiny.es.version>2.7.3</tiny.es.version>
         <resilience4jVersion>2.2.0</resilience4jVersion>
     </properties>
 
