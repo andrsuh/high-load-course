@@ -1,8 +1,10 @@
 package ru.quipy.config
 
+import org.apache.coyote.http2.Http2Protocol
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.mongo.MongoClientSettingsBuilderCustomizer
+import org.springframework.boot.web.embedded.tomcat.TomcatConnectorCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.core.EventSourcingServiceFactory
@@ -81,6 +83,17 @@ class EventSourcingLibConfiguration {
 
             onBatchRead { streamName, batchSize ->
                 logger.debug("Stream $streamName read batch size: $batchSize")
+            }
+        }
+    }
+
+    @Bean
+    fun tomcatConnectorCustomizer(): TomcatConnectorCustomizer {
+        return TomcatConnectorCustomizer {
+            try {
+                (it.protocolHandler.findUpgradeProtocols().get(0) as Http2Protocol).maxConcurrentStreams = 10_000_000
+            } catch (e: Exception) {
+                logger.error("!!! Failed to increase number of http2 streams per connection !!!")
             }
         }
     }
