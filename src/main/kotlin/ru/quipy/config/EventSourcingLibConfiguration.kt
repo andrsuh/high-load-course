@@ -3,7 +3,6 @@ package ru.quipy.config
 import org.apache.coyote.http2.Http2Protocol
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.autoconfigure.mongo.MongoClientSettingsBuilderCustomizer
 import org.springframework.boot.web.embedded.tomcat.TomcatConnectorCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -15,7 +14,6 @@ import ru.quipy.orders.logic.OrderAggregateState
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.streams.AggregateEventStreamManager
-import ru.quipy.streams.AggregateSubscriptionsManager
 import ru.quipy.warehouse.api.BookingAggregate
 import ru.quipy.warehouse.api.ProductAggregate
 import ru.quipy.warehouse.logic.BookingAggregateState
