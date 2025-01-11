@@ -51,7 +51,7 @@ class ExternalServicesConfig {
             parallelRequests = 15,
             rateLimitPerSec = 5,
             price = 40, // Call costs 40
-            averageProcessingTime = Duration.ofMillis(15_000),
+            averageProcessingTime = Duration.ofMillis(5_000),
             enabled = true,
         )
 

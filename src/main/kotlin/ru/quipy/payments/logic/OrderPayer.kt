@@ -1,4 +1,4 @@
-package ru.quipy.payments.subscribers
+package ru.quipy.payments.logic
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -7,9 +7,6 @@ import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.payments.logic.PaymentAggregateState
-import ru.quipy.payments.logic.PaymentService
-import ru.quipy.payments.logic.create
 import java.util.*
 import java.util.concurrent.Executors
 
@@ -36,7 +33,7 @@ class OrderPayer {
                     amount
                 )
             }
-            logger.trace("Payment ${createdEvent.paymentId} for order ${orderId} created.")
+            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(createdEvent.paymentId, amount, createdAt)
         }

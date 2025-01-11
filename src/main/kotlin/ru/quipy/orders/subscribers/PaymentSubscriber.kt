@@ -5,10 +5,9 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.OnlineShopApplication.Companion.appExecutor
-import ru.quipy.orders.projection.OrderRepository
+import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.api.PaymentProcessedEvent
-import ru.quipy.payments.subscribers.PaymentTransactionsSubscriber
 import ru.quipy.streams.AggregateSubscriptionsManager
 import ru.quipy.streams.annotation.RetryConf
 import ru.quipy.streams.annotation.RetryFailedStrategy
@@ -36,18 +35,18 @@ class PaymentSubscriber {
         ) {
             `when`(PaymentProcessedEvent::class) { event ->
                 appExecutor.submit {
-                    orderRepository.findById(event.orderId)?.let {
-                        orderRepository.save(
-                            it.copy(
-                                paymentHistory = (it.paymentHistory + PaymentTransactionsSubscriber.PaymentLogRecord(
-                                    event.processedAt,
-                                    if (event.success) PaymentTransactionsSubscriber.PaymentStatus.SUCCESS else PaymentTransactionsSubscriber.PaymentStatus.FAILED,
-                                    event.amount,
-                                    event.paymentId
-                                ))
-                            )
-                        )
-                    } ?: IllegalStateException("Order with id ${event.orderId} not found")
+//                    orderRepository.findById(event.orderId)?.let {
+//                        orderRepository.save(
+//                            it.copy(
+//                                paymentHistory = (it.paymentHistory + PaymentTransactionsSubscriber.PaymentLogRecord(
+//                                    event.processedAt,
+//                                    if (event.success) PaymentTransactionsSubscriber.PaymentStatus.SUCCESS else PaymentTransactionsSubscriber.PaymentStatus.FAILED,
+//                                    event.amount,
+//                                    event.paymentId
+//                                ))
+//                            )
+//                        )
+//                    } ?: IllegalStateException("Order with id ${event.orderId} not found")
 
                     logger.info(
                         "Payment results. OrderId ${event.orderId}, succeeded: ${event.success}, txId: ${event.transactionId}, reason: ${event.reason}, duration: ${

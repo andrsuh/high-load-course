@@ -1,23 +1,13 @@
 package ru.quipy.config
 
-import org.apache.coyote.http2.Http2Protocol
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.web.embedded.tomcat.TomcatConnectorCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.core.EventSourcingServiceFactory
-import ru.quipy.delivery.api.DeliveryAggregate
-import ru.quipy.delivery.logic.DeliveryAggregateState
-import ru.quipy.orders.api.OrderAggregate
-import ru.quipy.orders.logic.OrderAggregateState
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.streams.AggregateEventStreamManager
-import ru.quipy.warehouse.api.BookingAggregate
-import ru.quipy.warehouse.api.ProductAggregate
-import ru.quipy.warehouse.logic.BookingAggregateState
-import ru.quipy.warehouse.logic.ProductAggregateState
 import java.util.*
 import javax.annotation.PostConstruct
 
@@ -57,19 +47,7 @@ class EventSourcingLibConfiguration {
      * Use this object to create/update the aggregate
      */
     @Bean
-    fun productEsService() = eventSourcingServiceFactory.create<UUID, ProductAggregate, ProductAggregateState>()
-
-    @Bean
-    fun bookingEsService() = eventSourcingServiceFactory.create<UUID, BookingAggregate, BookingAggregateState>()
-
-    @Bean
-    fun ordersEsService() = eventSourcingServiceFactory.create<UUID, OrderAggregate, OrderAggregateState>()
-
-    @Bean
     fun paymentsEsService() = eventSourcingServiceFactory.create<UUID, PaymentAggregate, PaymentAggregateState>()
-
-    @Bean
-    fun deliveryEsService() = eventSourcingServiceFactory.create<UUID, DeliveryAggregate, DeliveryAggregateState>()
 
     @PostConstruct
     fun init() {
@@ -81,17 +59,6 @@ class EventSourcingLibConfiguration {
 
             onBatchRead { streamName, batchSize ->
                 logger.debug("Stream $streamName read batch size: $batchSize")
-            }
-        }
-    }
-
-    @Bean
-    fun tomcatConnectorCustomizer(): TomcatConnectorCustomizer {
-        return TomcatConnectorCustomizer {
-            try {
-                (it.protocolHandler.findUpgradeProtocols().get(0) as Http2Protocol).maxConcurrentStreams = 10_000_000
-            } catch (e: Exception) {
-                logger.error("!!! Failed to increase number of http2 streams per connection !!!")
             }
         }
     }

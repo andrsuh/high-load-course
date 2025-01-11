@@ -1,4 +1,4 @@
-package ru.quipy.orders.projection
+package ru.quipy.orders.repository
 
 import com.github.benmanes.caffeine.cache.Caffeine
 import org.slf4j.Logger

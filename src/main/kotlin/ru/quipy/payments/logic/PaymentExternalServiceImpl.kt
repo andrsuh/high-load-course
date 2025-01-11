@@ -67,7 +67,7 @@ class PaymentExternalSystemAdapterImpl(
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(false, e.message)
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
@@ -81,6 +81,7 @@ class PaymentExternalSystemAdapterImpl(
         } catch (e: Exception) {
             when (e) {
                 is SocketTimeoutException -> {
+                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                     }
