@@ -23,7 +23,7 @@ class PaymentSystemImpl(
     }
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
-        for (account in paymentAccounts.filter { it.isEnabled() }) {
+        for (account in paymentAccounts) {
             account.performPaymentAsync(paymentId, amount, paymentStartedAt)
         }
     }

@@ -12,9 +12,9 @@
     </springProfile>
 
     <springProfile name="dev">
-        <logger name="ru.quipy" level="WARN"/>
+        <logger name="ru.quipy" level="INFO"/>
 
-        <root level="WARN">
+        <root level="INFO">
             <appender-ref ref="CONSOLE"/>
         </root>
     </springProfile>
