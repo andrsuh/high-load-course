@@ -5,13 +5,14 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import ru.quipy.payments.logic.ExternalServiceProperties
-import ru.quipy.payments.logic.PaymentExternalSystemAdapter
-import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl
+import ru.quipy.core.EventSourcingService
+import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.logic.*
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.util.*
 
 
 @Configuration
@@ -22,12 +23,12 @@ class ExternalAccountsConfig {
         private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
     }
 
-    private val allowedAccounts = setOf("test-account")
+    private val allowedAccounts = setOf("acc-5")
 
     @Bean
-    fun accountAdapters(): List<PaymentExternalSystemAdapter> {
+    fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
-            .uri(URI("http://${PAYMENT_PROVIDER_HOST_PORT}/external/accounts?serviceName=test")) // todo sukhoa service name
+            .uri(URI("http://${PAYMENT_PROVIDER_HOST_PORT}/external/accounts?serviceName=onlineStore")) // todo sukhoa service name
             .GET()
             .build()
 
@@ -39,6 +40,6 @@ class ExternalAccountsConfig {
             .filter {
                 it.accountName in allowedAccounts
             }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it) }
+            .map { PaymentExternalSystemAdapterImpl(it, paymentService) }
     }
 }
