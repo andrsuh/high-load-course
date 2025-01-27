@@ -23,7 +23,7 @@ class OrderPayer {
 
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-submission-executor"))
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID): Long {
+    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
@@ -35,7 +35,7 @@ class OrderPayer {
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(createdEvent.paymentId, amount, createdAt)
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
         return createdAt
     }

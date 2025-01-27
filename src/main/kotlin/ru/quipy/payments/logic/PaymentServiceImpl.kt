@@ -19,12 +19,11 @@ class PaymentSystemImpl(
 ) : PaymentService {
     companion object {
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
-        val paymentOperationTimeout = Duration.ofSeconds(80)
     }
 
-    override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
+    override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         for (account in paymentAccounts) {
-            account.performPaymentAsync(paymentId, amount, paymentStartedAt)
+            account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
         }
     }
 }

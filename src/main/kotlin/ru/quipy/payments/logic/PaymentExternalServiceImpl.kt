@@ -35,15 +35,10 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val httpClientExecutor = Executors.newSingleThreadExecutor()
+    private val client = OkHttpClient.Builder().build()
 
-    private val client = OkHttpClient.Builder().run {
-        dispatcher(Dispatcher(httpClientExecutor))
-        build()
-    }
-
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
+    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
