@@ -16,7 +16,7 @@ import java.util.*
 
 
 @Configuration
-class ExternalAccountsConfig {
+class PaymentAccountsConfig {
     companion object {
         private val PAYMENT_PROVIDER_HOST_PORT: String = "localhost:1234"
         private val javaClient = HttpClient.newBuilder().build()
@@ -33,6 +33,8 @@ class ExternalAccountsConfig {
             .build()
 
         val resp = javaClient.send(request, HttpResponse.BodyHandlers.ofString())
+
+        println("\nPayment accounts list:")
         return mapper.readValue<List<ExternalServiceProperties>>(
             resp.body(),
             mapper.typeFactory.constructCollectionType(List::class.java, ExternalServiceProperties::class.java)
