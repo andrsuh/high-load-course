@@ -35,9 +35,9 @@ class PaymentAccountsConfig {
         val resp = javaClient.send(request, HttpResponse.BodyHandlers.ofString())
 
         println("\nPayment accounts list:")
-        return mapper.readValue<List<ExternalServiceProperties>>(
+        return mapper.readValue<List<PaymentAccountProperties>>(
             resp.body(),
-            mapper.typeFactory.constructCollectionType(List::class.java, ExternalServiceProperties::class.java)
+            mapper.typeFactory.constructCollectionType(List::class.java, PaymentAccountProperties::class.java)
         )
             .filter {
                 it.accountName in allowedAccounts

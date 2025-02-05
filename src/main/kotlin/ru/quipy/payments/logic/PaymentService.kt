@@ -29,7 +29,7 @@ interface PaymentExternalSystemAdapter {
 /**
  * Describes properties of payment-provider accounts.
  */
-data class ExternalServiceProperties(
+data class PaymentAccountProperties(
     val serviceName: String,
     val accountName: String,
     val parallelRequests: Int,
