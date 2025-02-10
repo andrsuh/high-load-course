@@ -6,7 +6,6 @@ import org.springframework.boot.CommandLineRunner
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
 import org.springframework.context.annotation.Bean
-import org.springframework.data.mongodb.core.MongoTemplate
 import ru.quipy.common.utils.NamedThreadFactory
 import java.util.*
 import java.util.concurrent.Executors
@@ -20,13 +19,6 @@ class OnlineShopApplication {
         val appExecutor = Executors.newFixedThreadPool(64, NamedThreadFactory("main-app-executor"))
     }
 
-    @Bean
-    @Throws(Exception::class)
-    fun run(mongoTemplate: MongoTemplate): CommandLineRunner? {
-        return CommandLineRunner {
-            mongoTemplate.db.drop()
-        }
-    }
 }
 
 fun main(args: Array<String>) {
