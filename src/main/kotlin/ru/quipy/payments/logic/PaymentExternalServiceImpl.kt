@@ -8,21 +8,19 @@ import okhttp3.RequestBody
 import okhttp3.Response
 import org.slf4j.LoggerFactory
 import ru.quipy.common.exceptions.PaymentException
-import ru.quipy.common.utils.FixedWindowRateLimiter
 import ru.quipy.common.utils.RateLimiter
-import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
-    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val rateLimiter: RateLimiter,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -37,9 +35,9 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
-    private val rateLimiter: RateLimiter = SlidingWindowRateLimiter(10, Duration.ofSeconds(1))
     private val client = OkHttpClient.Builder().build()
 
+    //TODO: find a way to configure rate limiters on each account
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
