@@ -7,11 +7,12 @@ import java.time.Duration
 import java.util.*
 
 
-fun PaymentAggregateState.create(id: UUID, orderId: UUID, amount: Int): PaymentCreatedEvent {
+fun PaymentAggregateState.create(id: UUID, orderId: UUID, amount: Int, deadline: Long): PaymentCreatedEvent {
     return PaymentCreatedEvent(
         paymentId = id,
         orderId = orderId,
         amount = amount,
+        deadline = deadline
     )
 }
 

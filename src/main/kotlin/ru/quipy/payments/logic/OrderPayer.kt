@@ -39,12 +39,11 @@ class OrderPayer {
                 it.create(
                     paymentId,
                     orderId,
-                    amount
+                    amount,
+                    deadline
                 )
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
-
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
         return createdAt
     }
