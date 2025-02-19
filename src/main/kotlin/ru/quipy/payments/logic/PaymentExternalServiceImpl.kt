@@ -37,7 +37,8 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    private val rateLimiter = CountingRateLimiter(rateLimitPerSec, 990, TimeUnit.MILLISECONDS)
+    private val parts = 3
+    private val rateLimiter = CountingRateLimiter(rateLimitPerSec / parts, (requestAverageProcessingTime.toMillis() - 10) / parts, TimeUnit.MILLISECONDS)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         while (!rateLimiter.tick()) {
