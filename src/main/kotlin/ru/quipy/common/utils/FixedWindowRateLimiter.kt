@@ -131,6 +131,8 @@ class CountingRateLimiter(
         }
     }
 
+    fun getNextSegmentStartTime() = internal.segmentStart
+
     class RlInternal(
         var segmentStart: Long = System.currentTimeMillis(),
         var permits: Int = 0,
