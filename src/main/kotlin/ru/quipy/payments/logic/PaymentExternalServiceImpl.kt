@@ -6,6 +6,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -31,6 +34,7 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val slidingWindowRateLimiter = SlidingWindowRateLimiter(10, Duration.ofSeconds(1))
 
     private val client = OkHttpClient.Builder().build()
 
@@ -39,6 +43,13 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
+
+        if (!slidingWindowRateLimiter.tick()) {
+            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", ResponseStatusException(
+                HttpStatus.TOO_MANY_REQUESTS, "Too many requests, please try again later."
+            ))
+            return
+        }
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -76,7 +87,6 @@ class PaymentExternalSystemAdapterImpl(
                         it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                     }
                 }
-
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
