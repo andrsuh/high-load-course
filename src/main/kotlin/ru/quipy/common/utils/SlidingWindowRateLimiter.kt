@@ -26,14 +26,11 @@ class SlidingWindowRateLimiter(
         if (sum.get() > rate) {
             return false
         } else {
-            mutex.withLock {
-                val now = System.currentTimeMillis()
-                if (sum.get() <= rate) {
-                    queue.add(Measure(1, now))
-                    sum.incrementAndGet()
-                    return true
-                } else return false
-            }
+            if (sum.get() <= rate) {
+                queue.add(Measure(1, System.currentTimeMillis()))
+                sum.incrementAndGet()
+                return true
+            } else return false
         }
     }
 
