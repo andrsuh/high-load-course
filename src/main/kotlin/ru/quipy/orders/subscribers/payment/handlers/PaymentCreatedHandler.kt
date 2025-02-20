@@ -27,24 +27,22 @@ class PaymentCreatedHandler : EventHandler<PaymentCreatedEvent> {
     val logger: Logger = LoggerFactory.getLogger(PaymentCreatedHandler::class.java)
 
     override suspend fun handle(event: PaymentCreatedEvent) {
-        try {
-            semaphore.acquire()
+        semaphore.acquire()
 
-            OnlineShopApplication.Companion.appExecutor.submit {
-                val order = orderRepository.findById(event.orderId)
+        OnlineShopApplication.Companion.appExecutor.submit {
+            val order = orderRepository.findById(event.orderId)
 
-                if (order == null) {
-                    logger.error("Order ${event.orderId} was not found.")
+            if (order == null) {
+                logger.error("Order ${event.orderId} was not found.")
 
-                    PaymentException.paymentFailure("Order ${event.orderId} was not found.")
-
-                }
-                paymentService.submitPaymentRequest(event.paymentId, event.amount, now(), event.deadline)
+                PaymentException.paymentFailure("Order ${event.orderId} was not found.")
 
             }
-        } finally {
+            paymentService.submitPaymentRequest(event.paymentId, event.amount, now(), event.deadline)
+
             semaphore.release()
         }
+
     }
 
 }
