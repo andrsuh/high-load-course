@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.RateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -16,7 +17,8 @@ import java.util.*
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
-    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val rateLimiter: RateLimiter,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -35,6 +37,9 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        if (!rateLimiter.tick()) {
+            return
+        }
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -52,6 +57,7 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
+
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
