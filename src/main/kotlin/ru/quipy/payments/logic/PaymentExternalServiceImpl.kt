@@ -34,7 +34,7 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
-    private val slidingWindowRateLimiter = SlidingWindowRateLimiter(10, Duration.ofSeconds(1))
+    private val slidingWindowRateLimiter = SlidingWindowRateLimiter(600, Duration.ofSeconds(60))
 
     private val client = OkHttpClient.Builder().build()
 
@@ -44,12 +44,7 @@ class PaymentExternalSystemAdapterImpl(
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
 
-        if (!slidingWindowRateLimiter.tick()) {
-            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", ResponseStatusException(
-                HttpStatus.TOO_MANY_REQUESTS, "Too many requests, please try again later."
-            ))
-            return
-        }
+//        slidingWindowRateLimiter.tickBlocking()
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -63,6 +58,10 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
+            if (!slidingWindowRateLimiter.tick()) {
+                throw ResponseStatusException(
+                    HttpStatus.TOO_MANY_REQUESTS, "Too many requests, please try again later.")
+            }
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
