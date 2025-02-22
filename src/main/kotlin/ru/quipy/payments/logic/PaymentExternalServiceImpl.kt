@@ -2,10 +2,15 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -18,6 +23,7 @@ class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 ) : PaymentExternalSystemAdapter {
+
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -34,11 +40,33 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
+    private val rateLimiter = LeakingBucketRateLimiter(
+        rate = rateLimitPerSec.toLong(),
+        window = Duration.ofSeconds(1),
+        bucketSize = parallelRequests * 2
+    )
+
+    private val deferredQueue = LinkedList<suspend () -> Unit>()
+    private val queueScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        queueScope.launch {
+            processPayment(paymentId, amount, paymentStartedAt, deadline)
+        }
+    }
+
+    private suspend fun processPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        val success = rateLimiter.tickBlocking(Duration.ofMillis(500))
+
+        if (!success) {
+            logger.warn("[$accountName] Payment $paymentId delayed due to rate limit")
+            deferredQueue.add { processPayment(paymentId, amount, paymentStartedAt, deadline) }
+            return
+        }
 
         val transactionId = UUID.randomUUID()
-        logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
+        logger.info("[$accountName] Processing payment: $paymentId, txId: $transactionId")
+
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
