@@ -1,5 +1,6 @@
 package ru.quipy.orders.subscribers.payment.handlers
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -30,19 +31,19 @@ class PaymentCreatedHandler : EventHandler<PaymentCreatedEvent> {
         semaphore.acquire()
 
         OnlineShopApplication.Companion.appExecutor.submit {
-            val order = orderRepository.findById(event.orderId)
+            runBlocking {
+                val order = orderRepository.findById(event.orderId)
 
-            if (order == null) {
-                logger.error("Order ${event.orderId} was not found.")
+                if (order == null) {
+                    logger.error("Order ${event.orderId} was not found.")
 
-                PaymentException.paymentFailure("Order ${event.orderId} was not found.")
+                    PaymentException.paymentFailure("Order ${event.orderId} was not found.")
 
+                }
+                paymentService.submitPaymentRequest(event.paymentId, event.amount, now(), event.deadline)
+
+                semaphore.release()
             }
-            paymentService.submitPaymentRequest(event.paymentId, event.amount, now(), event.deadline)
-
-            semaphore.release()
         }
-
     }
-
 }

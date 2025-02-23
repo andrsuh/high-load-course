@@ -26,10 +26,10 @@ class PaymentAccountsConfig {
         private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
     }
 
-    private val allowedAccounts = setOf("acc-3")
+    private val allowedAccounts = setOf("acc-5")
 
     private val accountLimiters = mapOf<String, RateLimiter>(
-        Pair("acc-3", SlidingWindowRateLimiter(9, Duration.ofSeconds(1)))
+        Pair("acc-5", SlidingWindowRateLimiter(2, Duration.ofSeconds(1)))
     )
 
     @Bean
