@@ -1,12 +1,13 @@
-package ru.quipy.orders.subscribers
+package ru.quipy.orders.subscribers.payment
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
-import ru.quipy.OnlineShopApplication.Companion.appExecutor
-import ru.quipy.orders.repository.OrderRepository
+import ru.quipy.OnlineShopApplication
+import ru.quipy.orders.subscribers.payment.handlers.EventHandler
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.api.PaymentCreatedEvent
 import ru.quipy.payments.api.PaymentProcessedEvent
 import ru.quipy.streams.AggregateSubscriptionsManager
 import ru.quipy.streams.annotation.RetryConf
@@ -24,7 +25,8 @@ class PaymentSubscriber {
     lateinit var subscriptionsManager: AggregateSubscriptionsManager
 
     @Autowired
-    private lateinit var orderRepository: OrderRepository
+    private lateinit var paymentCreatedEventHandler: EventHandler<PaymentCreatedEvent>
+
 
     @PostConstruct
     fun init() {
@@ -34,7 +36,7 @@ class PaymentSubscriber {
             retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)
         ) {
             `when`(PaymentProcessedEvent::class) { event ->
-                appExecutor.submit {
+                OnlineShopApplication.Companion.appExecutor.submit {
 //                    orderRepository.findById(event.orderId)?.let {
 //                        orderRepository.save(
 //                            it.copy(
@@ -58,5 +60,15 @@ class PaymentSubscriber {
                 }
             }
         }
+
+        subscriptionsManager.createSubscriber(
+            PaymentAggregate::class,
+            "orders:payment-processor-subscriber",
+            retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)
+        )
+        {
+            `when`(PaymentCreatedEvent::class) { event -> paymentCreatedEventHandler.handle(event) }
+        }
+
     }
 }

@@ -14,6 +14,7 @@ class PaymentCreatedEvent(
     val paymentId: UUID,
     val orderId: UUID,
     val amount: Int,
+    val deadline: Long,
     createdAt: Long = System.currentTimeMillis(),
 ) : Event<PaymentAggregate>(
     name = PAYMENT_CREATED_EVENT,
