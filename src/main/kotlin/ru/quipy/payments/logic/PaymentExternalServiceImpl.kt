@@ -8,11 +8,13 @@ import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -35,8 +37,12 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
     private val client = OkHttpClient.Builder().build()
 
-    private val rateLimiter = LeakingBucketRateLimiter(
-        rate = 10, window = Duration.ofMillis(1000), bucketSize = 10)
+    private val rateLimiterBucket = TokenBucketRateLimiter(
+        rateLimitPerSec,
+        window = 1000,
+        bucketMaxCapacity = 11,
+        timeUnit = TimeUnit.MILLISECONDS
+    )
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -50,13 +56,15 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        while (!rateLimiter.tick())
-            Thread.sleep(5)
+        while (!rateLimiterBucket.tick()) {
+            Thread.sleep(10)
+        }
 
         val request = Request.Builder().run {
             url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
             post(emptyBody)
         }.build()
+
 
         try {
             client.newCall(request).execute().use { response ->
