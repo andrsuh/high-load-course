@@ -16,6 +16,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 
 
@@ -39,6 +40,7 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
     private val slidingWindowRateLimiter = SlidingWindowRateLimiter(600, Duration.ofSeconds(60))
     private val ongoingWindow = NonBlockingOngoingWindow(parallelRequests)
+    private val semaphore = Semaphore(properties.parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -49,6 +51,7 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
 
 //        slidingWindowRateLimiter.tickBlocking()
+        semaphore.acquire()
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -102,6 +105,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } finally {
+            semaphore.release()
             ongoingWindow.releaseWindow()
         }
     }
