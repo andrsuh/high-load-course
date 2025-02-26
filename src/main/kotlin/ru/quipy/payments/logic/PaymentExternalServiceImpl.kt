@@ -11,9 +11,10 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
+import java.util.UUID
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
-
+import java.util.concurrent.TimeoutException
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -26,6 +27,9 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        private const val THREAD_SLEEP_MILLIS = 5L
+        private const val PROCESSING_TIME_MILLIS = 60000
     }
 
     private val serviceName = properties.serviceName
@@ -36,11 +40,14 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
     private val rateLimiter = TokenBucketRateLimiter(
-        rate = 10,
+        rate = rateLimitPerSec,
         window = 1005,
-        bucketMaxCapacity = 10,
+        bucketMaxCapacity = rateLimitPerSec,
         timeUnit = TimeUnit.MILLISECONDS
     )
+
+    private val semaphore = Semaphore(parallelRequests, true)
+    private val acquireMaxWaitMillis = PROCESSING_TIME_MILLIS - requestAverageProcessingTime.toMillis()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -60,9 +67,17 @@ class PaymentExternalSystemAdapterImpl(
             post(emptyBody)
         }.build()
 
+        var isAcquired = false
+        var threadWaitTime = 0L
         try {
             while (!rateLimiter.tick()) {
-                Thread.sleep(5)
+                threadWaitTime += THREAD_SLEEP_MILLIS
+                Thread.sleep(THREAD_SLEEP_MILLIS)
+            }
+
+            isAcquired = semaphore.tryAcquire(acquireMaxWaitMillis - threadWaitTime, TimeUnit.MILLISECONDS)
+            if (!isAcquired) {
+                throw TimeoutException("Failed to acquire permission to process payment")
             }
 
             client.newCall(request).execute().use { response ->
@@ -97,6 +112,10 @@ class PaymentExternalSystemAdapterImpl(
                         it.logProcessing(false, now(), transactionId, reason = e.message)
                     }
                 }
+            }
+        } finally {
+            if (isAcquired) {
+                semaphore.release()
             }
         }
     }
