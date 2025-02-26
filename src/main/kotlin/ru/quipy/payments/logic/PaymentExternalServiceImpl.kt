@@ -8,12 +8,15 @@ import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.web.server.ResponseStatusException
+import ru.quipy.common.utils.NonBlockingOngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -35,6 +38,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
     private val slidingWindowRateLimiter = SlidingWindowRateLimiter(600, Duration.ofSeconds(60))
+    private val ongoingWindow = NonBlockingOngoingWindow(parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -58,9 +62,12 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
-            if (!slidingWindowRateLimiter.tick()) {
-                throw ResponseStatusException(
-                    HttpStatus.TOO_MANY_REQUESTS, "Too many requests, please try again later.")
+            while (!slidingWindowRateLimiter.tick()) {
+//                throw ResponseStatusException(
+//                    HttpStatus.TOO_MANY_REQUESTS, "Too many requests, please try again later.")
+            }
+            while (ongoingWindow.putIntoWindow() is NonBlockingOngoingWindow.WindowResponse.Fail) {
+                // Intentionally empty
             }
             client.newCall(request).execute().use { response ->
                 val body = try {
@@ -94,6 +101,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            ongoingWindow.releaseWindow()
         }
     }
 
