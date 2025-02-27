@@ -37,8 +37,8 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        if (!rateLimiter.tick()) {
-            return
+        while (!rateLimiter.tick()) {
+            Thread.sleep(10)
         }
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
