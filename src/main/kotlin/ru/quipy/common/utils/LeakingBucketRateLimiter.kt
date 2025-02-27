@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 class LeakingBucketRateLimiter(
     private val rate: Long,
@@ -19,7 +20,11 @@ class LeakingBucketRateLimiter(
     private val queue = LinkedBlockingQueue<Int>(bucketSize)
 
     override fun tick(): Boolean {
-        return queue.offer(1)
+        while (true) {
+            if (queue.offer(1, 1, TimeUnit.SECONDS)) {
+                return true
+            }
+        }
     }
 
     private val releaseJob = rateLimiterScope.launch {
