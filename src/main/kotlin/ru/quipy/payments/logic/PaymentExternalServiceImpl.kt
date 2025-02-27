@@ -13,6 +13,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 
 
@@ -39,11 +40,16 @@ class PaymentExternalSystemAdapterImpl(
 
     private val parts = 3
     private val rateLimiter = CountingRateLimiter(rateLimitPerSec / parts, requestAverageProcessingTime.toMillis() / parts, TimeUnit.MILLISECONDS)
+    private val semaphore = Semaphore(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        while (!rateLimiter.tick()) {
-            Thread.sleep(150)
-        }
+//        while (!rateLimiter.tick()) {
+//            Thread.sleep(150)
+//        }
+
+        semaphore.acquire()
+        logger.info("Аcquire. Semaphore queue length: ${semaphore.queueLength}")
+
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -94,6 +100,9 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            semaphore.release()
+            logger.info("Release. Semaphore queue length: ${semaphore.queueLength}")
         }
     }
 
