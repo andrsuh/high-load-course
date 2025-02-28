@@ -1,4 +1,4 @@
-version: "3.9"
+#version: "3.9"
 services:
   postgres:
     hostname: event_sourcing_db
@@ -13,14 +13,14 @@ services:
       - ${POSTGRES_EXTERNAL_DB_PORT}:${POSTGRES_DB_PORT}
     command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_connections=200
     restart: unless-stopped
-#  mongo:
-#    build:
-##      context: mongoDb
-#      dockerfile: mongoDb/Dockerfile
-#    restart: always
-#    ports:
-#      - 27017:27017
-#    volumes:
-#      - mongo_data:/data/db
+  mongo:
+    build:
+#      context: mongoDb
+      dockerfile: mongoDb/Dockerfile
+    restart: always
+    ports:
+      - 27017:27017
+    volumes:
+      - mongo_data:/data/db
 volumes:
   mongo_data: { }
