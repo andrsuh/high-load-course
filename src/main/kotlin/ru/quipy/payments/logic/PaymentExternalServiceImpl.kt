@@ -6,7 +6,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.CompositeRateLimiter
 import ru.quipy.common.utils.CountingRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -38,17 +37,25 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
+    private val second_in_ms = 1000L
     private val parts = 3
-    private val rateLimiter = CountingRateLimiter(rateLimitPerSec / parts, requestAverageProcessingTime.toMillis() / parts, TimeUnit.MILLISECONDS)
+    private val rateLimiter = CountingRateLimiter(rateLimitPerSec / parts, second_in_ms / parts, TimeUnit.MILLISECONDS)
     private val semaphore = Semaphore(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-//        while (!rateLimiter.tick()) {
-//            Thread.sleep(150)
-//        }
-
         semaphore.acquire()
         logger.info("Аcquire. Semaphore queue length: ${semaphore.queueLength}")
+        if (deadline < now() + requestAverageProcessingTime.toMillis()) {
+            semaphore.release()
+            logger.info("Release because of deadline. Semaphore queue length: ${semaphore.queueLength}")
+        }
+
+        while (!rateLimiter.tick()) {
+            Thread.sleep(150)
+            if (deadline < now() + requestAverageProcessingTime.toMillis()) {
+                break
+            }
+        }
 
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
