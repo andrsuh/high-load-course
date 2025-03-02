@@ -32,18 +32,21 @@ class PaymentCreatedHandler : EventHandler<PaymentCreatedEvent> {
 
         OnlineShopApplication.Companion.appExecutor.submit {
             runBlocking {
-                val order = orderRepository.findById(event.orderId)
+                try {
+                    val order = orderRepository.findById(event.orderId)
 
-                if (order == null) {
-                    logger.error("Order ${event.orderId} was not found.")
+                    if (order == null) {
+                        logger.error("Order ${event.orderId} was not found.")
 
-                    PaymentException.paymentFailure("Order ${event.orderId} was not found.")
+                        PaymentException.paymentFailure("Order ${event.orderId} was not found.")
 
+                    }
+                    paymentService.submitPaymentRequest(event.paymentId, event.amount, now(), event.deadline)
                 }
-                paymentService.submitPaymentRequest(event.paymentId, event.amount, now(), event.deadline)
-
-                semaphore.release()
-            }
+                finally {
+                    semaphore.release()
+                }
+                }
         }
     }
 }
