@@ -11,6 +11,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import io.github.resilience4j.ratelimiter.*
 
 
 // Advice: always treat time as a Duration
@@ -34,8 +35,19 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
+    private val rateLimiter = RateLimiter.of(
+        "paymentRateLimiter-$accountName",
+        RateLimiterConfig.custom()
+            .limitRefreshPeriod(Duration.ofSeconds(1))
+            .limitForPeriod(rateLimitPerSec)
+            .timeoutDuration(Duration.ofSeconds(5))
+            .build()
+    )
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        if (!rateLimiter.acquirePermission()) {
+            return
+        }
 
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
