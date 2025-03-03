@@ -20,7 +20,7 @@ class SlidingWindowRateLimiter(
 
     private val sum = AtomicLong(0)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
-    private val mutex = ReentrantLock()
+    private val mutex = ReentrantLock(true)
 
     override fun tick(): Boolean {
         if (sum.get() > rate) {
