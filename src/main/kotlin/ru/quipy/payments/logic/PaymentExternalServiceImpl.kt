@@ -38,7 +38,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val rt = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds (1))
 
-    private var semaphore = Semaphore (parallelRequests)
+    private var semaphore = Semaphore (parallelRequests, true)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -57,9 +57,41 @@ class PaymentExternalSystemAdapterImpl(
             post(emptyBody)
         }.build()
 
+        semaphore.acquire()
+
+        if (willCompleteAfterDeadline(deadline)) {
+            logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough parallel requests")
+            paymentESService.update(paymentId) {
+                it.logProcessing(
+                    success = false,
+                    now(),
+                    transactionId,
+                    reason = "Request would complete after deadline. No point in processing"
+                )
+            }
+
+            semaphore.release()
+            return
+        }
+
+        rt.tickBlocking()
+
+        if (willCompleteAfterDeadline(deadline)) {
+            logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough rps tokens")
+            paymentESService.update(paymentId) {
+                it.logProcessing(
+                    success = false,
+                    now(),
+                    transactionId,
+                    reason = "Request would complete after deadline. No point in processing"
+                )
+            }
+
+            semaphore.release()
+            return
+        }
+
         try {
-            semaphore.acquire()
-            rt. tickBlocking ()
 
             client.newCall(request).execute().use { response ->
                 val body = try {
@@ -105,6 +137,11 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
+    private fun willCompleteAfterDeadline(deadline: Long): Boolean {
+        val expectedEnd = now() + requestAverageProcessingTime.toMillis() * 2
+
+        return expectedEnd >= deadline
+    }
 }
 
 public fun now() = System.currentTimeMillis()
