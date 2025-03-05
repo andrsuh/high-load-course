@@ -1,35 +1,57 @@
 package ru.quipy.common.utils
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.Duration
-import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class LeakingBucketRateLimiter(
     private val rate: Long,
     private val window: Duration,
     bucketSize: Int,
 ) : RateLimiter {
-    private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+    private val rateLimiterScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val queue = LinkedBlockingQueue<Int>(bucketSize)
+    private val availableTokens = AtomicLong(bucketSize.toLong())
 
-    override fun tick(): Boolean {
-        return queue.offer(1)
+    init {
+        startTokenRefillJob()
     }
 
-    private val releaseJob = rateLimiterScope.launch {
-        while (true) {
-            delay(window.toMillis())
-            for (i in 0..rate) {
-                queue.poll()
+    override fun tick(): Boolean {
+        val current = availableTokens.get()
+        return current > 0 && availableTokens.compareAndSet(current, current - 1)
+    }
+
+    suspend fun tickBlocking(timeout: Duration): Boolean {
+        return suspendCoroutine { cont ->
+            val start = System.currentTimeMillis()
+            while (!tick()) {
+                if (System.currentTimeMillis() - start > timeout.toMillis()) {
+                    cont.resume(false)
+                    return@suspendCoroutine
+                }
             }
+            cont.resume(true)
         }
-    }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+    }
+
+    private fun startTokenRefillJob() {
+        rateLimiterScope.launch {
+            while (isActive) {
+                delay(window.toMillis() / rate)
+                val current = availableTokens.get()
+                if (current < rate) {
+                    availableTokens.incrementAndGet()
+                }
+            }
+        }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter token refill job failed", th) }
+    }
+
 
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(LeakingBucketRateLimiter::class.java)
