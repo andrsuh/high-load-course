@@ -2,10 +2,12 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.sync.Semaphore
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -29,12 +31,9 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
-    private val rateLimitPerSec = properties.rateLimitPerSec
-    private val parallelRequests = properties.parallelRequests
 
     private val client = OkHttpClient.Builder().build()
-
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -57,7 +56,7 @@ class PaymentExternalSystemAdapterImpl(
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
@@ -76,7 +75,6 @@ class PaymentExternalSystemAdapterImpl(
                         it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                     }
                 }
-
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
@@ -88,12 +86,24 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
+    override fun isDeadlineExceeded(deadline: Long): Boolean =
+        now() + requestAverageProcessingTime.toMillis() * 1.5 >= deadline
+
+    override fun failPayment(paymentId: UUID) {
+        paymentESService.update(paymentId) {
+            it.logProcessing(false, now(), null, reason = "Failed to process")
+        }
+    }
+
     override fun price() = properties.price
 
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
 
+    override fun parallelRequests() = properties.parallelRequests
+
+    override fun rateLimit() = properties.rateLimitPerSec
 }
 
 public fun now() = System.currentTimeMillis()
