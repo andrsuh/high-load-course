@@ -12,27 +12,23 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 class LeakingBucketRateLimiter(
-    private val rate: Long,
-    private val window: Duration,
-    bucketSize: Int,
+    private val rps: Long,
 ) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
-    private val queue = LinkedBlockingQueue<Int>(bucketSize)
+    private val queue = LinkedBlockingQueue<Unit>(rps.toInt())
 
     override fun tick(): Boolean {
-        while (true) {
-            if (queue.offer(1, 1, TimeUnit.SECONDS)) {
-                return true
-            }
-        }
+        return queue.offer(Unit)
+    }
+
+    fun tickBlocking(duration: Long): Boolean {
+        return queue.offer(Unit, duration, TimeUnit.MILLISECONDS)
     }
 
     private val releaseJob = rateLimiterScope.launch {
         while (true) {
-            delay(window.toMillis())
-            for (i in 0..rate) {
-                queue.poll()
-            }
+            delay((Duration.ofSeconds(1).toMillis()) / rps)
+            queue.poll()
         }
     }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
 

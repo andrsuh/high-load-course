@@ -37,11 +37,9 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     // private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), requestAverageProcessingTime)
-    private val rateLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong(), requestAverageProcessingTime, parallelRequests)
+    private val rateLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong())
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        rateLimiter.tick()
-
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -51,6 +49,13 @@ class PaymentExternalSystemAdapterImpl(
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        }
+
+        if (!rateLimiter.tickBlocking(deadline - paymentStartedAt)) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Request timeout")
+            }
+            return
         }
 
         val request = Request.Builder().run {
