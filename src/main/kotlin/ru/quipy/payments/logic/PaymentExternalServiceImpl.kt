@@ -54,9 +54,18 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         semaphore.acquire()
+        var timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
+        if (timeBeforeDeadline <= 0) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Request will cause timeout, stopped")
+            }
+            semaphore.release()
+            return
+        }
 
-        val timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
-        if (timeBeforeDeadline <= 0 || !rateLimiter.tickBlocking(timeBeforeDeadline)) {
+        rateLimiter.tickBlocking()
+        timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
+        if (timeBeforeDeadline <= 0) {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Request will cause timeout, stopped")
             }
