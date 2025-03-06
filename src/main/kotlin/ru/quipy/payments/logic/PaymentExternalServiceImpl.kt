@@ -46,7 +46,7 @@ class PaymentExternalSystemAdapterImpl(
         timeUnit = TimeUnit.MILLISECONDS
     )
 
-    private val semaphore = Semaphore(parallelRequests, true)
+    private val semaphore = Semaphore(parallelRequests, false)
     private val acquireMaxWaitMillis = PROCESSING_TIME_MILLIS - requestAverageProcessingTime.toMillis()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -75,7 +75,7 @@ class PaymentExternalSystemAdapterImpl(
                 Thread.sleep(THREAD_SLEEP_MILLIS)
             }
 
-            isAcquired = semaphore.tryAcquire(acquireMaxWaitMillis - threadWaitTime, TimeUnit.MILLISECONDS)
+            isAcquired = semaphore.tryAcquire(Math.max(0, deadline - now() - requestAverageProcessingTime.toMillis()), TimeUnit.MILLISECONDS)
             if (!isAcquired) {
                 throw TimeoutException("Failed to acquire permission to process payment")
             }
