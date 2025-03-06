@@ -8,10 +8,13 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.internal.wait
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.CustomRateLimiter
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.lang.Long.max
+import java.lang.Long.min
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -38,7 +41,10 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    private val rateLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong())
+    private val rateLimiter = CustomRateLimiter(
+        min(rateLimitPerSec.toLong() * requestAverageProcessingTime.toMillis() / 1100, parallelRequests.toLong()),
+        requestAverageProcessingTime,
+    )
     private val semaphore = Semaphore(parallelRequests)
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -54,7 +60,7 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         semaphore.acquire()
-        var timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
+        val timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
         if (timeBeforeDeadline <= 0) {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Request will cause timeout, stopped")
@@ -63,9 +69,7 @@ class PaymentExternalSystemAdapterImpl(
             return
         }
 
-        rateLimiter.tickBlocking()
-        timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
-        if (timeBeforeDeadline <= 0) {
+        if (!rateLimiter.tickBlocking(deadline + requestAverageProcessingTime.toMillis())) {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Request will cause timeout, stopped")
             }
