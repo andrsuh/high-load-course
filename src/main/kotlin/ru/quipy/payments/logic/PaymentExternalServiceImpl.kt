@@ -2,9 +2,11 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.sync.Semaphore
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.internal.wait
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
@@ -36,10 +38,10 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    // private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), requestAverageProcessingTime)
     private val rateLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong())
+    private val semaphore = Semaphore(parallelRequests)
 
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -51,10 +53,14 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        if (!rateLimiter.tickBlocking(deadline - paymentStartedAt)) {
+        semaphore.acquire()
+
+        val timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
+        if (timeBeforeDeadline <= 0 || !rateLimiter.tickBlocking(timeBeforeDeadline)) {
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Request timeout")
+                it.logProcessing(false, now(), transactionId, reason = "Request will cause timeout, stopped")
             }
+            semaphore.release()
             return
         }
 
@@ -97,6 +103,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            semaphore.release()
         }
     }
 

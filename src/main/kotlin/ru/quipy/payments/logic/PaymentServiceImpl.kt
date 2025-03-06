@@ -10,6 +10,8 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.locks.ReentrantLock
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlin.concurrent.withLock
 
 
@@ -23,7 +25,11 @@ class PaymentSystemImpl(
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         for (account in paymentAccounts) {
-            account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+            runBlocking {
+                launch {
+                    account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+                }
+            }
         }
     }
 }
