@@ -46,7 +46,7 @@ class PaymentAccountsConfig {
         rateLimiter: RateLimiter
     ) =
         RateLimitStage(
-            RetryStage(
+            next = RetryStage(
                 next = ProcessStage(
                     paymentService,
                     properties
