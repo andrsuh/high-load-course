@@ -5,17 +5,25 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import ru.quipy.common.utils.FixedWindowRateLimiter
 import ru.quipy.common.utils.RateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.payments.logic.*
+import ru.quipy.payments.logic.PaymentAccountProperties
+import ru.quipy.payments.logic.PaymentAggregateState
+import ru.quipy.payments.logic.PaymentExternalSystemAdapter
+import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl
+import ru.quipy.payments.logic.PaymentStages.ProcessStage
+import ru.quipy.payments.logic.PaymentStages.RateLimitStage
+import ru.quipy.payments.logic.PaymentStages.RetryStage
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 @Configuration
@@ -26,11 +34,26 @@ class PaymentAccountsConfig {
         private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
     }
 
-    private val allowedAccounts = setOf("acc-5")
+    private val allowedAccounts = setOf("acc-8")
 
     private val accountLimiters = mapOf<String, RateLimiter>(
-        Pair("acc-5", SlidingWindowRateLimiter(2, Duration.ofSeconds(1)))
+        Pair("acc-8", FixedWindowRateLimiter(7, 1000, TimeUnit.MILLISECONDS)),
     )
+
+    private fun paymentStages(
+        properties: PaymentAccountProperties,
+        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+        rateLimiter: RateLimiter
+    ) =
+        RateLimitStage(
+            RetryStage(
+                next = ProcessStage(
+                    paymentService,
+                    properties
+                )
+            ),
+            rateLimiter = rateLimiter
+        )
 
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
@@ -49,6 +72,15 @@ class PaymentAccountsConfig {
             .filter {
                 it.accountName in allowedAccounts
             }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it, paymentService, accountLimiters[it.accountName]!!) }
+            .map {
+                PaymentExternalSystemAdapterImpl(
+                    it,
+                    paymentStages(
+                        it,
+                        paymentService,
+                        accountLimiters[it.accountName]!!
+                    )
+                )
+            }
     }
 }

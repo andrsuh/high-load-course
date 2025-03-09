@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.OnlineShopApplication
+import ru.quipy.apigateway.APIController
+import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.orders.subscribers.payment.handlers.EventHandler
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.api.PaymentCreatedEvent
@@ -18,6 +20,8 @@ import javax.annotation.PostConstruct
 @Service
 class PaymentSubscriber {
 
+    @Autowired
+    private lateinit var orderRepository: OrderRepository
     val logger: Logger = LoggerFactory.getLogger(PaymentSubscriber::class.java)
 
 
@@ -64,10 +68,12 @@ class PaymentSubscriber {
         subscriptionsManager.createSubscriber(
             PaymentAggregate::class,
             "orders:payment-processor-subscriber",
-            retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)
+            retryConf = RetryConf(3, RetryFailedStrategy.SKIP_EVENT)
         )
         {
-            `when`(PaymentCreatedEvent::class) { event -> paymentCreatedEventHandler.handle(event) }
+            `when`(PaymentCreatedEvent::class) {
+                event -> paymentCreatedEventHandler.handle(event)
+            }
         }
 
     }
