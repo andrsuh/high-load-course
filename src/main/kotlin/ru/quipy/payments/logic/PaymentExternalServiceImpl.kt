@@ -4,37 +4,15 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.*
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.io.IOException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.PriorityBlockingQueue
-import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
-
-// Новый порог ожидания в очереди – 1000 мс.
-const val MAX_QUEUE_WAIT_MS = 1000L
-// Ограничение на максимальное число задач в очереди.
-const val MAX_QUEUE_SIZE = 100
-
-// Задача платежа с приоритетом. При равных дедлайнах используется время постановки.
-data class PaymentTask(
-    val paymentId: UUID,
-    val amount: Int,
-    val paymentStartedAt: Long,
-    val deadline: Long,
-    val attempt: Int = 1,
-    val enqueueTime: Long = now(),
-    val transactionId: UUID = UUID.randomUUID()
-) : Comparable<PaymentTask> {
-    override fun compareTo(other: PaymentTask): Int {
-        val cmp = this.deadline.compareTo(other.deadline)
-        return if (cmp != 0) cmp else this.enqueueTime.compareTo(other.enqueueTime)
-    }
-}
+import java.util.concurrent.*
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.min
+import kotlin.random.Random
 
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
@@ -42,163 +20,150 @@ class PaymentExternalSystemAdapterImpl(
 ) : PaymentExternalSystemAdapter {
 
     companion object {
-        val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapterImpl::class.java)
-        val emptyBody = RequestBody.create(null, ByteArray(0))
-        val mapper = ObjectMapper().registerKotlinModule()
-        const val MAX_RETRIES = 2
-        const val INITIAL_BACKOFF_MS = 50L
-        fun now() = System.currentTimeMillis()
+        private val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
+        private val emptyBody = RequestBody.create(null, ByteArray(0))
+        private val mapper = ObjectMapper().registerKotlinModule()
+
+        private const val MAX_RETRIES = 5
+        private const val INITIAL_RETRY_DELAY_MS = 500L
+        private const val JITTER_MS = 300L
+        private const val MAX_PARALLEL_REQUESTS = 6
+        private const val FAILURE_THRESHOLD = 0.3
     }
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(1, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
+        .writeTimeout(1, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
+    private val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
+
+    private val failedRequests = AtomicInteger(0)
+    private val totalRequests = AtomicInteger(0)
+    private val recentFailures = ConcurrentLinkedQueue<Long>()
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
-    private val rateLimitPerSec = properties.rateLimitPerSec
-    private val parallelRequests = properties.parallelRequests
-
-    // Ограничение по скорости – rateLimitPerSec запросов в секунду.
-    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    // Semaphore с fairness=true для соблюдения порядка.
-    private val ongoingRequests = Semaphore(parallelRequests, true)
-    private val client = OkHttpClient.Builder().build()
-    private val scheduler = Executors.newSingleThreadScheduledExecutor()
-
-    // Приоритетная очередь задач.
-    private val pendingTasks = PriorityBlockingQueue<PaymentTask>()
-
-    init {
-        // Обработка очереди каждые 10 мс.
-        scheduler.scheduleWithFixedDelay({ processPendingTasks() }, 0, 10, TimeUnit.MILLISECONDS)
-    }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        // Если очередь уже переполнена, отклоняем задачу.
-        if (pendingTasks.size >= MAX_QUEUE_SIZE) {
-            logger.error("[$accountName] Очередь переполнена, отклоняем задачу: paymentId=$paymentId")
+        logger.info("[$accountName] Старт платежа $paymentId")
+
+        val transactionId = UUID.randomUUID()
+        val request = buildRequest(paymentId, amount, transactionId)
+
+        paymentESService.update(paymentId) {
+            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        }
+
+        val retryCount = AtomicInteger(0)
+        var isFastFailEnabled = false
+
+        while (retryCount.get() < MAX_RETRIES && now() < deadline) {
+            val remainingTime = deadline - now()
+            if (remainingTime <= 0) {
+                logger.error("[$accountName] Дедлайн истек, платеж $paymentId отменен.")
+                break
+            }
+
+            val attempt = retryCount.incrementAndGet()
+
+            if (!isFastFailEnabled && shouldEnableFastFail()) {
+                logger.warn("[$accountName] Включен FAST-FAIL режим: слишком много отказов.")
+                isFastFailEnabled = true
+            }
+
+            val future = executor.submit<Boolean> {
+                executeWithTimeout(request, transactionId, paymentId, attempt, remainingTime, isFastFailEnabled)
+            }
+
+            try {
+                if (future.get(remainingTime, TimeUnit.MILLISECONDS)) break
+            } catch (e: TimeoutException) {
+                logger.warn("[$accountName] Поток $attempt: превысил дедлайн.")
+            } catch (e: Exception) {
+                logger.error("[$accountName] Поток $attempt: ошибка выполнения", e)
+            }
+        }
+
+        if (retryCount.get() >= MAX_RETRIES) {
+            logger.error("[$accountName] Платеж $paymentId провален после $MAX_RETRIES попыток.")
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), UUID.randomUUID(), "Queue overload")
+                it.logProcessing(false, now(), transactionId, reason = "Max retries exceeded.")
             }
-            return
-        }
-        val task = PaymentTask(paymentId, amount, paymentStartedAt, deadline)
-        pendingTasks.put(task)
-        logger.info("[$accountName] Задача поставлена в очередь: paymentId=$paymentId, deadline=$deadline")
-    }
-
-    private fun processPendingTasks() {
-        while (true) {
-            val task = pendingTasks.peek() ?: break
-
-            // Если задача уже просрочена, удаляем и логируем ошибку.
-            if (now() > task.deadline) {
-                pendingTasks.poll()
-                logger.error("[$accountName] Дедлайн истёк в очереди: paymentId=${task.paymentId}")
-                paymentESService.update(task.paymentId) {
-                    it.logProcessing(false, now(), UUID.randomUUID(), "Deadline exceeded in queue")
-                }
-                continue
-            }
-
-            // Проверяем время ожидания задачи в очереди.
-            val waitTime = now() - task.enqueueTime
-            val semaphoreAcquired = if (waitTime >= MAX_QUEUE_WAIT_MS) {
-                // Если задача ждёт слишком долго, пробуем сразу получить разрешение без ожидания.
-                ongoingRequests.tryAcquire(0, TimeUnit.MILLISECONDS)
-            } else {
-                // Иначе ждем оставшееся время до дедлайна.
-                val remainingTime = task.deadline - now()
-                ongoingRequests.tryAcquire(remainingTime, TimeUnit.MILLISECONDS)
-            }
-
-            if (!semaphoreAcquired) {
-                // Если не получили разрешение, и задача уже слишком старая, удаляем её.
-                if (waitTime >= MAX_QUEUE_WAIT_MS) {
-                    pendingTasks.poll()
-                    logger.error("[$accountName] Задача слишком долго ждёт, удаляем: paymentId=${task.paymentId}")
-                    paymentESService.update(task.paymentId) {
-                        it.logProcessing(false, now(), UUID.randomUUID(), "Exceeded max queue wait")
-                    }
-                }
-                // Если разрешение не получено, выходим из цикла, чтобы не загружать систему.
-                break
-            }
-
-            // Забираем задачу для обработки.
-            val taskToProcess = pendingTasks.poll()
-            if (taskToProcess == null) {
-                ongoingRequests.release()
-                break
-            }
-
-            processPaymentTask(taskToProcess)
         }
     }
 
-    private fun processPaymentTask(task: PaymentTask) {
-        // Пропускаем через rateLimiter.
-        rateLimiter.tickBlocking()
+    private fun buildRequest(paymentId: UUID, amount: Int, transactionId: UUID): Request {
+        return Request.Builder()
+            .url("http://localhost:1234/external/process?serviceName=$serviceName&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+            .post(emptyBody)
+            .build()
+    }
+    private fun executeWithTimeout(request: Request, transactionId: UUID, paymentId: UUID, attempt: Int, remainingTime: Long, fastFail: Boolean): Boolean {
+        val timeout = min(remainingTime, (5_000L / attempt))
 
-        logger.info("[$accountName] Обработка задачи: paymentId=${task.paymentId}, txId=${task.transactionId}, attempt=${task.attempt}")
+        return try {
+            val future = CompletableFuture<Boolean>()
 
-        paymentESService.update(task.paymentId) {
-            it.logSubmission(true, task.transactionId, now(), Duration.ofMillis(now() - task.paymentStartedAt))
-        }
-
-        val requestUrl = "http://localhost:1234/external/process" +
-                "?serviceName=$serviceName&accountName=$accountName&transactionId=${task.transactionId}" +
-                "&paymentId=${task.paymentId}&amount=${task.amount}"
-        val request = Request.Builder().url(requestUrl).post(emptyBody).build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                ongoingRequests.release()
-                if (task.attempt < MAX_RETRIES && now() < task.deadline) {
-                    logger.warn("[$accountName] Ошибка платежа: txId=${task.transactionId}, paymentId=${task.paymentId}, attempt=${task.attempt}, reason=${e.message}")
-                    scheduleRetry(task, e.message ?: "Error")
-                } else {
-                    logger.error("[$accountName] Критическая ошибка: txId=${task.transactionId}, paymentId=${task.paymentId}", e)
-                    paymentESService.update(task.paymentId) {
-                        it.logProcessing(false, now(), task.transactionId, e.message ?: "Unknown error")
-                    }
+            val call = client.newCall(request)
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    logger.error("[$accountName] Поток $attempt: Ошибка запроса", e)
+                    failedRequests.incrementAndGet()
+                    recentFailures.add(now())
+                    future.complete(false)
                 }
-            }
 
-            override fun onResponse(call: Call, response: Response) {
-                ongoingRequests.release()
-                response.use { res ->
-                    val externalResponse = try {
-                        mapper.readValue(res.body?.string(), ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] Ошибка парсинга: txId=${task.transactionId}, paymentId=${task.paymentId}", e)
-                        ExternalSysResponse(task.transactionId.toString(), task.paymentId.toString(), false, e.message)
-                    }
-                    if (!externalResponse.result && task.attempt < MAX_RETRIES && now() < task.deadline) {
-                        logger.warn("[$accountName] Повтор платежа: txId=${task.transactionId}, paymentId=${task.paymentId}, reason=${externalResponse.message}")
-                        scheduleRetry(task, externalResponse.message ?: "Negative response")
-                    } else {
-                        logger.info("[$accountName] Завершение платежа: txId=${task.transactionId}, success=${externalResponse.result}, reason=${externalResponse.message}")
-                        paymentESService.update(task.paymentId) {
-                            it.logProcessing(externalResponse.result, now(), task.transactionId, externalResponse.message)
+                override fun onResponse(call: Call, response: Response) {
+                    totalRequests.incrementAndGet()
+                    try {
+                        when (response.code) {
+                            429 -> {
+                                logger.warn("[$accountName] 429 Too Many Requests. Повторный запрос через backoff.")
+                                Thread.sleep((INITIAL_RETRY_DELAY_MS * Random.nextDouble(1.0, 2.0)).toLong())
+                                future.complete(false)
+                            }
+                            500, 502, 503, 504 -> {
+                                logger.warn("[$accountName] Ошибка ${response.code}, отправляем в очередь на повтор.")
+                                future.complete(false)
+                            }
+                            else -> {
+                                val body = response.body?.string()?.let {
+                                    try {
+                                        mapper.readValue(it, ExternalSysResponse::class.java)
+                                    } catch (e: Exception) {
+                                        logger.error("[$accountName] Ошибка парсинга ответа: ${e.message}")
+                                        null
+                                    }
+                                }
+                                val result = body?.result ?: false
+                                paymentESService.update(paymentId) {
+                                    it.logProcessing(result, now(), transactionId, reason = body?.message)
+                                }
+                                future.complete(result)
+                            }
                         }
+                    } finally {
+                        response.close()
                     }
                 }
-            }
-        })
+            })
+
+            return future.get(timeout, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            logger.error("[$accountName] Поток $attempt: Тайм-аут ответа.")
+            return false
+        } catch (e: Exception) {
+            logger.error("[$accountName] Поток $attempt: Ошибка", e)
+            return false
+        }
     }
 
-    private fun scheduleRetry(task: PaymentTask, reason: String) {
-        val newAttempt = task.attempt + 1
-        val delayMillis = INITIAL_BACKOFF_MS * newAttempt
-        if (now() + delayMillis > task.deadline) {
-            logger.error("[$accountName] Недостаточно времени для повторной попытки: paymentId=${task.paymentId}")
-            paymentESService.update(task.paymentId) {
-                it.logProcessing(false, now(), UUID.randomUUID(), "Deadline exceeded before retry")
-            }
-            return
-        }
-        // Создаём новую задачу с увеличенной попыткой.
-        val newTask = task.copy(attempt = newAttempt, enqueueTime = now(), transactionId = UUID.randomUUID())
-        scheduler.schedule({ pendingTasks.put(newTask) }, delayMillis, TimeUnit.MILLISECONDS)
-        logger.info("[$accountName] Задача на повтор поставлена в очередь: paymentId=${task.paymentId}, новый attempt=$newAttempt, delay=$delayMillis ms, reason=$reason")
+    private fun shouldEnableFastFail(): Boolean {
+        val recentFailCount = recentFailures.count { it > now() - 10_000 }
+        return recentFailCount > 3 && recentFailCount.toDouble() / (totalRequests.get() + 1) > FAILURE_THRESHOLD
     }
 
     override fun price() = properties.price
