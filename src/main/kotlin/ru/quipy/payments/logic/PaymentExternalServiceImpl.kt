@@ -6,8 +6,8 @@ import kotlinx.coroutines.launch
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.dto.PendingRequest
@@ -15,6 +15,8 @@ import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.*
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.min
 
 
 // Advice: always treat time as a Duration
@@ -37,10 +39,8 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val requestsQueue = PriorityBlockingQueue<PendingRequest>(parallelRequests)
-    private val rateLimiter =
-        LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1), parallelRequests)
-
-    private val coreRateLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1), rateLimitPerSec)
+    private val outgoingRateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L))
+    private val inFlightRequests = AtomicInteger(0)
 
     private val coreExecutor = ThreadPoolExecutor(
         parallelRequests,
@@ -65,11 +65,25 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun submitPayments() {
-        if (requestsQueue.peek() === null || !coreRateLimiter.tick()) {
+        val paymentRequest = requestsQueue.poll()
+
+        if (paymentRequest === null) {
             return
         }
 
-        val paymentRequest = requestsQueue.poll()
+        if (inFlightRequests.incrementAndGet() > parallelRequests) {
+            inFlightRequests.decrementAndGet()
+            requestsQueue.add(paymentRequest)
+
+            return
+        }
+
+        if (!outgoingRateLimiter.tick()) {
+            inFlightRequests.decrementAndGet()
+            requestsQueue.add(paymentRequest)
+
+            return
+        }
 
         coreExecutor.submit {
             try {
@@ -89,8 +103,11 @@ class PaymentExternalSystemAdapterImpl(
                 paymentESService.update(paymentRequest.paymentId) {
                     it.logProcessing(body.result, now(), paymentRequest.transactionId, reason = body.message)
                 }
+
+                inFlightRequests.decrementAndGet()
             } catch (e: Exception) {
                 handleException(paymentRequest, e)
+                inFlightRequests.decrementAndGet()
             }
         }
     }
@@ -101,12 +118,12 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
-    override fun canAcceptPayment(amount: Int, deadline: Long): Boolean {
-        if (!rateLimiter.tick()) {
-            return false
+    override fun canAcceptPayment(deadline: Long): Boolean {
+        if (deadline.toDouble() < now().toDouble() + (requestsQueue.size + 1).toDouble() / selectMaxRps() * 1000) {
+            throw IllegalStateException("Time limits for $accountName breached")
         }
 
-        return now() + requestsQueue.size / rateLimitPerSec * 1000 + requestAverageProcessingTime.toMillis() < deadline
+        return true
     }
 
     private fun handleException(paymentRequest: PendingRequest, e: Exception) {
@@ -138,6 +155,13 @@ class PaymentExternalSystemAdapterImpl(
         while (true) {
             submitPayments()
         }
+    }
+
+    private fun selectMaxRps(): Double {
+        val ownRps = rateLimitPerSec.toDouble()
+        val providerRps = 1 / requestAverageProcessingTime.toSeconds().toDouble() * rateLimitPerSec.toDouble()
+
+        return min(ownRps, providerRps)
     }
 }
 

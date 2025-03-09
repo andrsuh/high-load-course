@@ -1,10 +1,8 @@
 package ru.quipy.payments.logic
 
-import com.github.dockerjava.zerodep.shaded.org.apache.hc.core5.http.HttpException
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -22,8 +20,8 @@ class OrderPayer {
     private lateinit var paymentService: PaymentService
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
-        if (!paymentService.canAcceptPayment(amount, deadline)) {
-            throw HttpException("Payment service can't accept a new payment", HttpStatus.TOO_MANY_REQUESTS)
+        if (!paymentService.canAcceptPayment(deadline)) {
+            throw IllegalStateException("Payment service can't accept a new payment")
         }
 
         val createdAt = System.currentTimeMillis()
