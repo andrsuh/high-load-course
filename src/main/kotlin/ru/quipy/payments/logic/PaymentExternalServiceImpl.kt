@@ -54,6 +54,7 @@ class PaymentExternalSystemAdapterImpl(
             url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
             post(emptyBody)
         }.build()
+        ////
         window.acquire()
         try {
             client.newCall(request).execute().use { response ->
