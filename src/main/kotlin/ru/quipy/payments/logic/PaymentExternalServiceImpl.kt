@@ -38,22 +38,36 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     private val second_in_ms = 1000L
-    private val parts = 3
+    private val parts = rateLimitPerSec
+    private val partsIn = parallelRequests
+    private val eps = requestAverageProcessingTime.toMillis() / 2
     private val rateLimiter = CountingRateLimiter(rateLimitPerSec / parts, second_in_ms / parts, TimeUnit.MILLISECONDS)
+    private val incomeLimiter = CountingRateLimiter(parallelRequests / partsIn, requestAverageProcessingTime.toSeconds() * second_in_ms / partsIn, TimeUnit.MILLISECONDS)
     private val semaphore = Semaphore(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        while (!incomeLimiter.tick()) {
+            Thread.sleep(100)
+            if (deadline < now() + requestAverageProcessingTime.toMillis() + eps) {
+                logger.info("UwU")
+                return
+            }
+        }
+
         semaphore.acquire()
         logger.info("Аcquire. Semaphore queue length: ${semaphore.queueLength}")
-        if (deadline < now() + requestAverageProcessingTime.toMillis()) {
+        if (deadline < now() + requestAverageProcessingTime.toMillis() + eps) {
             semaphore.release()
             logger.info("Release because of deadline. Semaphore queue length: ${semaphore.queueLength}")
+            return
         }
 
         while (!rateLimiter.tick()) {
-            Thread.sleep(150)
-            if (deadline < now() + requestAverageProcessingTime.toMillis()) {
-                break
+            Thread.sleep(100)
+            if (deadline < now() + requestAverageProcessingTime.toMillis() + eps) {
+                semaphore.release()
+                logger.info("Release because of deadline. Semaphore queue length: ${semaphore.queueLength}")
+                return
             }
         }
 
