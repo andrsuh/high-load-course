@@ -7,7 +7,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.ExternalSysResponse
@@ -34,6 +36,8 @@ class ProcessStage(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        val tooManyRequestsCode = 429;
     }
 
     private val serviceName = properties.serviceName
@@ -71,7 +75,7 @@ class ProcessStage(
                 ExternalSysResponse(transactionId.toString(), payment.paymentId.toString(), false, e.message)
             }
 
-            if (!body.result)
+            if (!body.result && response.code != tooManyRequestsCode)
                 return ProcessResult(retry = true)
 
             logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: ${payment.paymentId}, succeeded: ${body.result}, message: ${body.message}")
