@@ -12,13 +12,13 @@ class RateLimiterConfig {
     @Bean
     fun rateLimiter(): RateLimiter {
         return LeakingBucketRateLimiter(
-            rate = 2,
+            rate = 8,
             window = Duration.ofSeconds(1),
-            bucketSize = 3
+            bucketSize = 25
         )
     }
     @Bean
     fun ongoingWindow(): OngoingWindow {
-        return OngoingWindow(4)
+        return OngoingWindow(40)
     }
 }
