@@ -29,7 +29,10 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
 
         private const val THREAD_SLEEP_MILLIS = 5L
-        private const val PROCESSING_TIME_MILLIS = 60000
+        private const val PROCESSING_TIME_MILLIS = 3500
+        private const val MAX_RETRY_COUNT = 10
+        private val RETRYABLE_HTTP_CODES = setOf(429, 500, 502, 503, 504)
+        private const val DELAY_DURATION_MILLIS = 25L
     }
 
     private val serviceName = properties.serviceName
@@ -46,7 +49,7 @@ class PaymentExternalSystemAdapterImpl(
         timeUnit = TimeUnit.MILLISECONDS
     )
 
-    private val semaphore = Semaphore(parallelRequests, false)
+    private val semaphore = Semaphore(parallelRequests, true)
     private val acquireMaxWaitMillis = PROCESSING_TIME_MILLIS - requestAverageProcessingTime.toMillis()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -69,33 +72,41 @@ class PaymentExternalSystemAdapterImpl(
 
         var isAcquired = false
         var threadWaitTime = 0L
-        try {
-            while (!rateLimiter.tick()) {
+
+        var curIteration = 0
+        while (curIteration < MAX_RETRY_COUNT) {
+            var isRetryableWithDelay = false
+            try {
+                while (!rateLimiter.tick()) {
                 threadWaitTime += THREAD_SLEEP_MILLIS
                 Thread.sleep(THREAD_SLEEP_MILLIS)
             }
 
-            isAcquired = semaphore.tryAcquire(Math.max(0, deadline - now() - requestAverageProcessingTime.toMillis()), TimeUnit.MILLISECONDS)
-            if (!isAcquired) {
+                isAcquired = semaphore.tryAcquire(acquireMaxWaitMillis - threadWaitTime, TimeUnit.MILLISECONDS)
+                if (!isAcquired) {
                 throw TimeoutException("Failed to acquire permission to process payment")
             }
 
-            client.newCall(request).execute().use { response ->
-                val body = try {
-                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+
+                client.newCall(request).execute().use { response ->
+                    val body = try {
+                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                    } catch (e: Exception) {
+                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                    }
+
+                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+                    // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+                    // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                    }
+                    if (body.result) return
+                    if (RETRYABLE_HTTP_CODES.contains(response.code)) isRetryableWithDelay = true
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
-            }
         } catch (e: Exception) {
             when (e) {
                 is SocketTimeoutException -> {
@@ -117,6 +128,14 @@ class PaymentExternalSystemAdapterImpl(
             if (isAcquired) {
                 semaphore.release()
             }
+        }
+
+            curIteration++
+            if (curIteration < MAX_RETRY_COUNT && isRetryableWithDelay) {
+                logger.warn("[$accountName]/ Retry for payment processed for txId: $transactionId, payment: $paymentId")
+                Thread.sleep(DELAY_DURATION_MILLIS)
+            }
+            if (now() + requestAverageProcessingTime.toMillis() * 1.2 >= deadline) return
         }
     }
 
