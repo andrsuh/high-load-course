@@ -10,7 +10,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
-class PaymentAggregateState : AggregateState<UUID, PaymentAggregate> {
+class  PaymentAggregateState : AggregateState<UUID, PaymentAggregate> {
     private lateinit var paymentId: UUID
 
     var createdAt: Long = System.currentTimeMillis()
