@@ -29,11 +29,10 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
 
         private const val THREAD_SLEEP_MILLIS = 5L
-        private const val PROCESSING_TIME_MILLIS = 60000
-        private const val MAX_RETRY_COUNT = 3
+        private const val PROCESSING_TIME_MILLIS = 3500
+        private const val MAX_RETRY_COUNT = 10
         private val RETRYABLE_HTTP_CODES = setOf(429, 500, 502, 503, 504)
-        private const val DELAY_DURATION_MILLIS = 1000L
-        private const val HTTP_OK = 200
+        private const val DELAY_DURATION_MILLIS = 25L
     }
 
     private val serviceName = properties.serviceName
@@ -52,13 +51,6 @@ class PaymentExternalSystemAdapterImpl(
 
     private val semaphore = Semaphore(parallelRequests, true)
     private val acquireMaxWaitMillis = PROCESSING_TIME_MILLIS - requestAverageProcessingTime.toMillis()
-
-    fun request() {
-
-
-
-    }
-
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -87,15 +79,14 @@ class PaymentExternalSystemAdapterImpl(
                 Thread.sleep(THREAD_SLEEP_MILLIS)
             }
 
-
             isAcquired = semaphore.tryAcquire(acquireMaxWaitMillis - threadWaitTime, TimeUnit.MILLISECONDS)
             if (!isAcquired) {
                 throw TimeoutException("Failed to acquire permission to process payment")
             }
 
             var curIteration = 0
+            var isRetryableWithDelay = false
             while (curIteration < MAX_RETRY_COUNT) {
-                var delay = 0L
 
                 client.newCall(request).execute().use { response ->
                     val body = try {
@@ -112,20 +103,17 @@ class PaymentExternalSystemAdapterImpl(
                     paymentESService.update(paymentId) {
                         it.logProcessing(body.result, now(), transactionId, reason = body.message)
                     }
-                    if (!RETRYABLE_HTTP_CODES.contains(response.code)) {
-                        return
-                    }
+                    if (body.result) return
+                    if (RETRYABLE_HTTP_CODES.contains(response.code)) isRetryableWithDelay = true
                 }
-                curIteration++
-                delay = ((curIteration + 1) * 400L)
-                println("!!!!!!!!!!!!!!!! $delay")
-                if (curIteration < MAX_RETRY_COUNT) {
-                    logger.warn("[$accountName] Retry for payment processed for txId: $transactionId, payment: $paymentId")
-                    Thread.sleep(delay)
-                }
-                if (now() + requestAverageProcessingTime.toMillis() * 2 >= deadline) return
-            }
 
+                curIteration++
+                if (curIteration < MAX_RETRY_COUNT && isRetryableWithDelay) {
+                    logger.warn("[$accountName]/ Retry for payment processed for txId: $transactionId, payment: $paymentId")
+                    Thread.sleep(DELAY_DURATION_MILLIS)
+                }
+                if (now() + requestAverageProcessingTime.toMillis() * 1.2 >= deadline) return
+            }
         } catch (e: Exception) {
             when (e) {
                 is SocketTimeoutException -> {
