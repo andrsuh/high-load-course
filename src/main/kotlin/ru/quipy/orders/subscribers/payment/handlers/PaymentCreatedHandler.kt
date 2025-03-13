@@ -23,7 +23,7 @@ class PaymentCreatedHandler : EventHandler<PaymentCreatedEvent> {
     private lateinit var paymentService: PaymentService
 
     //TODO: to config
-    private val semaphore: Semaphore = Semaphore(10, 0)
+    private val semaphore: Semaphore = Semaphore(14, 0)
 
     val logger: Logger = LoggerFactory.getLogger(PaymentCreatedHandler::class.java)
 
@@ -46,7 +46,7 @@ class PaymentCreatedHandler : EventHandler<PaymentCreatedEvent> {
                 finally {
                     semaphore.release()
                 }
-                }
+            }
         }
     }
 }
