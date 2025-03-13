@@ -75,7 +75,7 @@ class ProcessStage(
                 ExternalSysResponse(transactionId.toString(), payment.paymentId.toString(), false, e.message)
             }
 
-            if (!body.result && response.code != tooManyRequestsCode)
+            if (!body.result)
                 return ProcessResult(retry = true)
 
             logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: ${payment.paymentId}, succeeded: ${body.result}, message: ${body.message}")
