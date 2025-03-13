@@ -40,11 +40,11 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong() - 1, Duration.ofSeconds(1))
     private val semaphore = Semaphore(parallelRequests)
+    private val parallelRequestWaitingTimeMillis = 100L
     //private val rateLimiter = FixedWindowRateLimiter(rateLimitPerSec, 1, TimeUnit.SECONDS)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
-
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
 
@@ -53,11 +53,10 @@ class PaymentExternalSystemAdapterImpl(
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
-        rateLimiter.tickBlocking()
-        while (!semaphore.tryAcquire())
-        {
-            Thread.sleep(500);
-        }
+//        while (!semaphore.tryAcquire())
+//        {
+//            Thread.sleep(parallelRequestWaitingTimeMillis);
+//        }
 
         val request = Request.Builder().run {
             url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
@@ -65,6 +64,25 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
+            rateLimiter.tickBlocking()
+            if (isDeadlineWillExpired(deadline, requestAverageProcessingTime))
+            {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(success = false, now(), transactionId, reason = "Deadline will expired before request")
+                }
+                return;
+            }
+
+            semaphore.acquire()
+
+            if (isDeadlineWillExpired(deadline, requestAverageProcessingTime))
+            {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(success = false, now(), transactionId, reason = "Deadline will expired before request")
+                }
+                semaphore.release()
+                return
+            }
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
@@ -111,3 +129,8 @@ class PaymentExternalSystemAdapterImpl(
 }
 
 public fun now() = System.currentTimeMillis()
+
+public fun isDeadlineWillExpired(deadlineTimeMillis: Long, requestAverageProcessingTime: Duration): Boolean  {
+    return now() + requestAverageProcessingTime.toMillis() + requestAverageProcessingTime.toMillis()/4 >= deadlineTimeMillis
+}
+
