@@ -37,6 +37,9 @@ data class PaymentAccountProperties(
     val price: Int,
     val averageProcessingTime: Duration = Duration.ofSeconds(11),
     val enabled: Boolean,
+    val maxRetries: Int = 5,
+    val retryDelay: Duration = Duration.ofMillis(500)
+
 )
 
 /**
