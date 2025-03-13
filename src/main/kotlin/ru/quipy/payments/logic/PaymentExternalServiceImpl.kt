@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.RateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -19,6 +20,7 @@ class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val rateLimiter: RateLimiter,
+    private val ongoingWindow: OngoingWindow,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -37,9 +39,7 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        while (!rateLimiter.tick()) {
-            Thread.sleep(10)
-        }
+
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -57,7 +57,10 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
-
+            ongoingWindow.acquire()
+            while (!rateLimiter.tick()) {
+                Thread.sleep(10)
+            }
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
@@ -91,6 +94,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            ongoingWindow.release()
         }
     }
 

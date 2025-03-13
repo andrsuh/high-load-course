@@ -10,6 +10,7 @@ import org.springframework.boot.web.embedded.jetty.JettyServletWebServerFactory
 import org.springframework.boot.web.embedded.tomcat.TomcatConnectorCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.RateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -36,7 +37,11 @@ class PaymentAccountsConfig {
     private val allowedAccounts = setOf("acc-19", "acc-20", "acc-21")
 
     @Bean
-    fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>, rateLimiter: RateLimiter): List<PaymentExternalSystemAdapter> {
+    fun accountAdapters(
+        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+        rateLimiter: RateLimiter,
+        ongoingWindow: OngoingWindow
+    ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=onlineStore")) // todo sukhoa service name
             .GET()
@@ -52,6 +57,6 @@ class PaymentAccountsConfig {
             .filter {
                 it.accountName in allowedAccounts
             }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it, paymentService, rateLimiter) }
+            .map { PaymentExternalSystemAdapterImpl(it, paymentService, rateLimiter, ongoingWindow) }
     }
 }
