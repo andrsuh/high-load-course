@@ -6,14 +6,10 @@ import kotlinx.coroutines.sync.Semaphore
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
-import okhttp3.internal.wait
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.CustomRateLimiter
-import ru.quipy.common.utils.LeakingBucketRateLimiter
-import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.lang.Long.max
 import java.lang.Long.min
 import java.net.SocketTimeoutException
 import java.time.Duration
@@ -107,6 +103,13 @@ class PaymentExternalSystemAdapterImpl(
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
                         }
+
+                        when (response.code) {
+                            400, 401, 403, 404, 405 -> {
+                                throw RuntimeException("Client error code: ${response.code}")
+                            }
+                            else -> { /* no op */ }
+                        }
                     }
                 } catch (e: SocketTimeoutException) {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
@@ -120,6 +123,7 @@ class PaymentExternalSystemAdapterImpl(
                         it.logProcessing(false, now(), transactionId, reason = e.message)
                     }
                     body = ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                    throw e
                 }
 
                 if (!body.result && attempt < maxRetries) {
