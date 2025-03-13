@@ -49,7 +49,7 @@ class PaymentExternalSystemAdapterImpl(
         timeUnit = TimeUnit.MILLISECONDS
     )
 
-    private val semaphore = Semaphore(parallelRequests, false)
+    private val semaphore = Semaphore(parallelRequests, true)
     private val acquireMaxWaitMillis = PROCESSING_TIME_MILLIS - requestAverageProcessingTime.toMillis()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -73,20 +73,20 @@ class PaymentExternalSystemAdapterImpl(
         var isAcquired = false
         var threadWaitTime = 0L
 
-        try {
-            while (!rateLimiter.tick()) {
+        var curIteration = 0
+        while (curIteration < MAX_RETRY_COUNT) {
+            var isRetryableWithDelay = false
+            try {
+                while (!rateLimiter.tick()) {
                 threadWaitTime += THREAD_SLEEP_MILLIS
                 Thread.sleep(THREAD_SLEEP_MILLIS)
             }
 
-            isAcquired = semaphore.tryAcquire(Math.max(0, deadline - now() - requestAverageProcessingTime.toMillis()), TimeUnit.MILLISECONDS)
-            if (!isAcquired) {
+                isAcquired = semaphore.tryAcquire(acquireMaxWaitMillis - threadWaitTime, TimeUnit.MILLISECONDS)
+                if (!isAcquired) {
                 throw TimeoutException("Failed to acquire permission to process payment")
             }
 
-            var curIteration = 0
-            var isRetryableWithDelay = false
-            while (curIteration < MAX_RETRY_COUNT) {
 
                 client.newCall(request).execute().use { response ->
                     val body = try {
@@ -107,13 +107,6 @@ class PaymentExternalSystemAdapterImpl(
                     if (RETRYABLE_HTTP_CODES.contains(response.code)) isRetryableWithDelay = true
                 }
 
-                curIteration++
-                if (curIteration < MAX_RETRY_COUNT && isRetryableWithDelay) {
-                    logger.warn("[$accountName]/ Retry for payment processed for txId: $transactionId, payment: $paymentId")
-                    Thread.sleep(DELAY_DURATION_MILLIS)
-                }
-                if (now() + requestAverageProcessingTime.toMillis() * 1.2 >= deadline) return
-            }
         } catch (e: Exception) {
             when (e) {
                 is SocketTimeoutException -> {
@@ -135,6 +128,14 @@ class PaymentExternalSystemAdapterImpl(
             if (isAcquired) {
                 semaphore.release()
             }
+        }
+
+            curIteration++
+            if (curIteration < MAX_RETRY_COUNT && isRetryableWithDelay) {
+                logger.warn("[$accountName]/ Retry for payment processed for txId: $transactionId, payment: $paymentId")
+                Thread.sleep(DELAY_DURATION_MILLIS)
+            }
+            if (now() + requestAverageProcessingTime.toMillis() * 1.2 >= deadline) return
         }
     }
 
