@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.ratelimiter.RateLimiter
+import io.github.resilience4j.ratelimiter.RateLimiterConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -11,7 +13,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import io.github.resilience4j.ratelimiter.*
+import java.util.concurrent.Semaphore
 
 
 // Advice: always treat time as a Duration
@@ -34,6 +36,7 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val client = OkHttpClient.Builder().build()
+    private val semaphore = Semaphore(parallelRequests)
 
     private val rateLimiter = RateLimiter.of(
         "paymentRateLimiter-$accountName",
@@ -63,6 +66,7 @@ class PaymentExternalSystemAdapterImpl(
             post(emptyBody)
         }.build()
 
+        semaphore.acquire()
         try {
             client.newCall(request).execute().use { response ->
                 val body = try {
@@ -97,6 +101,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            semaphore.release()
         }
     }
 
