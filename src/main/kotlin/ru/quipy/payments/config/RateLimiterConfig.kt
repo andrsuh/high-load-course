@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Configuration
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.RateLimiter
+import ru.quipy.common.utils.RetryInterceptor
 import java.time.Duration
 
 @Configuration
@@ -12,13 +13,18 @@ class RateLimiterConfig {
     @Bean
     fun rateLimiter(): RateLimiter {
         return LeakingBucketRateLimiter(
-            rate = 8,
+            rate = 5,
             window = Duration.ofSeconds(1),
             bucketSize = 25
         )
     }
     @Bean
     fun ongoingWindow(): OngoingWindow {
-        return OngoingWindow(40)
+        return OngoingWindow(25)
+    }
+
+    @Bean
+    fun retryInterceptor(): RetryInterceptor {
+        return RetryInterceptor(3)
     }
 }

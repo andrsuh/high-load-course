@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.RateLimiter
+import ru.quipy.common.utils.RetryInterceptor
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAccountProperties
@@ -34,13 +35,14 @@ class PaymentAccountsConfig {
     @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
 
-    private val allowedAccounts = setOf("acc-19", "acc-20", "acc-21")
+    private val allowedAccounts = setOf("acc-7")
 
     @Bean
     fun accountAdapters(
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
         rateLimiter: RateLimiter,
-        ongoingWindow: OngoingWindow
+        ongoingWindow: OngoingWindow,
+        retryInterceptor: RetryInterceptor,
     ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=onlineStore")) // todo sukhoa service name
@@ -57,6 +59,6 @@ class PaymentAccountsConfig {
             .filter {
                 it.accountName in allowedAccounts
             }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it, paymentService, rateLimiter, ongoingWindow) }
+            .map { PaymentExternalSystemAdapterImpl(it, paymentService, rateLimiter, ongoingWindow, retryInterceptor) }
     }
 }
