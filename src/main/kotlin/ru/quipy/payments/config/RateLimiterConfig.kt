@@ -25,6 +25,6 @@ class RateLimiterConfig {
 
     @Bean
     fun retryInterceptor(): RetryInterceptor {
-        return RetryInterceptor(3)
+        return RetryInterceptor(3, listOf(429, 500, 503, 504))
     }
 }

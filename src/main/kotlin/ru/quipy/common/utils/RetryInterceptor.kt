@@ -4,7 +4,7 @@ import okhttp3.Interceptor
 import java.io.IOException
 import java.time.Duration
 
-class RetryInterceptor(private val maxRetries: Int = 0, private val retryableHttpCodes: List<Int>) : Interceptor {
+class RetryInterceptor(private val maxRetries: Int = 1, private val retryableHttpCodes: List<Int>) : Interceptor {
     private val initialDelay = Duration.ofSeconds(1)
 
     @Throws(IOException::class)
@@ -19,7 +19,7 @@ class RetryInterceptor(private val maxRetries: Int = 0, private val retryableHtt
             try {
                 response = chain.proceed(request)
 
-                if (response.isSuccessful) {
+                if (response.isSuccessful || response.code !in retryableHttpCodes) {
                     return response
                 }
             } catch (e: IOException) {
