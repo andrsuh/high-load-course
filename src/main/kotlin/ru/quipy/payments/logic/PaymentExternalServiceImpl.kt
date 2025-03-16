@@ -54,7 +54,12 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        rateLimiter.tickBlocking()
+        if (!rateLimiter.tickBlocking(deadline - now())) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId)
+            }
+            return
+        }
 
         val remainedTime = (deadline - now() - 8000)
 
