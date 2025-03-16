@@ -25,9 +25,6 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    @Autowired
-    private lateinit var rateLimiter: SlidingWindowRateLimiter
-
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -39,7 +36,6 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        rateLimiter.tickBlocking()
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(

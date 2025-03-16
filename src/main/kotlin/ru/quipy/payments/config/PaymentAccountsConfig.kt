@@ -50,11 +50,4 @@ class PaymentAccountsConfig {
             }.onEach(::println)
             .map { PaymentExternalSystemAdapterImpl(it, paymentService) }
     }
-
-    @Bean
-    fun rateLimiter(externalSystems: List<PaymentExternalSystemAdapter>) : SlidingWindowRateLimiter {
-        if (externalSystems.size != 1) throw IllegalStateException();
-
-        return SlidingWindowRateLimiter(10, Duration.ofSeconds(1))
-    }
 }
