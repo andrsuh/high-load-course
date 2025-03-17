@@ -34,25 +34,31 @@ class PaymentAccountsConfig {
         private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
     }
 
-    private val allowedAccounts = setOf("acc-8")
+    private val allowedAccounts = setOf("acc-7")
 
     private val accountLimiters = mapOf<String, RateLimiter>(
-        Pair("acc-8", FixedWindowRateLimiter(7, 1000, TimeUnit.MILLISECONDS)),
+        Pair("acc-7", SlidingWindowRateLimiter(8, Duration.ofMillis(1000))),
+    )
+
+    private val accountTimeouts = mapOf<String, Duration>(
+        Pair("acc-7", Duration.ofMillis(1500)),
     )
 
     private fun paymentStages(
         properties: PaymentAccountProperties,
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
-        rateLimiter: RateLimiter
+        rateLimiter: RateLimiter,
+        timeout: Duration
     ) =
-        RateLimitStage(
-            next = RetryStage(
+        RetryStage(
+            next = RateLimitStage(
                 next = ProcessStage(
                     paymentService,
-                    properties
-                )
-            ),
-            rateLimiter = rateLimiter
+                    properties,
+                    timeout
+                ),
+                rateLimiter = rateLimiter
+            )
         )
 
     @Bean
@@ -78,7 +84,8 @@ class PaymentAccountsConfig {
                     paymentStages(
                         it,
                         paymentService,
-                        accountLimiters[it.accountName]!!
+                        accountLimiters[it.accountName]!!,
+                        accountTimeouts[it.accountName]!!
                     )
                 )
             }
