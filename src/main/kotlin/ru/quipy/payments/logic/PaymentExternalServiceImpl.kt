@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import org.HdrHistogram.Histogram
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
@@ -13,6 +14,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -37,6 +39,8 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), requestAverageProcessingTime)
     private val window = OngoingWindow(parallelRequests)
+    private val histogram = Histogram(1, requestAverageProcessingTime.toMillis()*2 , 2)
+    private var currentTimeout85thPercentile = requestAverageProcessingTime.toMillis()*2
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         rateLimiter.tickBlocking()
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -44,8 +48,6 @@ class PaymentExternalSystemAdapterImpl(
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
 
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
@@ -55,11 +57,17 @@ class PaymentExternalSystemAdapterImpl(
                 url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
             }.build()
-            ////
+
             window.acquire()
             try {
-                var success = false;
-                client.newCall(request).execute().use { response ->
+                val startTime = System.currentTimeMillis()
+                var success = false
+
+                val clientWithTimeout = client.newBuilder()
+                    .callTimeout(currentTimeout85thPercentile, TimeUnit.MILLISECONDS)
+                    .build()
+
+                clientWithTimeout.newCall(request).execute().use { response ->
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
@@ -70,13 +78,19 @@ class PaymentExternalSystemAdapterImpl(
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     success = body.result
 
-                            // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                    // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
                     paymentESService.update(paymentId) {
                         it.logProcessing(body.result, now(), transactionId, reason = body.message)
                     }
                 }
+
                 if (success) break
+
+                val duration = System.currentTimeMillis() - startTime
+                histogram.recordValue(duration)
+
+                currentTimeout85thPercentile = histogram.getValueAtPercentile(90.0)
+                logger.info("[$accountName] Updated 85th percentile timeout: $currentTimeout85thPercentile ms")
+
             } catch (e: Exception) {
                 when (e) {
                     is SocketTimeoutException -> {
@@ -97,7 +111,6 @@ class PaymentExternalSystemAdapterImpl(
             } finally {
                 window.release()
             }
-//            Thread.sleep(100)
         }
     }
 
