@@ -16,17 +16,17 @@ import java.util.*
 
 
 @Configuration
-class PaymentAccountsConfig {
+open class PaymentAccountsConfig {
     companion object {
         private val PAYMENT_PROVIDER_HOST_PORT: String = "localhost:1234"
         private val javaClient = HttpClient.newBuilder().build()
         private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
     }
 
-    private val allowedAccounts = setOf("acc-5")
+    private val allowedAccounts = setOf("acc-3")
 
     @Bean
-    fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
+    open fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${PAYMENT_PROVIDER_HOST_PORT}/external/accounts?serviceName=onlineStore")) // todo sukhoa service name
             .GET()

@@ -9,7 +9,7 @@ import java.util.concurrent.Executors
 
 
 @SpringBootApplication
-class OnlineShopApplication {
+open class OnlineShopApplication {
     val log: Logger = LoggerFactory.getLogger(OnlineShopApplication::class.java)
 
     companion object {
