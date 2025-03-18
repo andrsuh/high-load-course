@@ -3,6 +3,7 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.*
+import okhttp3.internal.http2.Http2
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -29,12 +30,18 @@ class PaymentExternalSystemAdapterImpl(
         private const val JITTER_MS = 300L
         private const val MAX_PARALLEL_REQUESTS = 6
         private const val FAILURE_THRESHOLD = 0.3
+        private const val CALL_TIMEOUT_MS = 10_000L 
+        private const val CACHE_SIZE = 100 
+        private const val CONNECTION_POOL_SIZE = 10 
     }
 
+    private val connectionPool = ConnectionPool(CONNECTION_POOL_SIZE, 5, TimeUnit.MINUTES)
+
     private val client = OkHttpClient.Builder()
-        .connectTimeout(1, TimeUnit.SECONDS)
-        .readTimeout(3, TimeUnit.SECONDS)
-        .writeTimeout(1, TimeUnit.SECONDS)
+        .connectTimeout(1, TimeUnit.SECONDS) 
+        .readTimeout(3, TimeUnit.SECONDS)  
+        .writeTimeout(1, TimeUnit.SECONDS)  
+        .protocols(listOf(Protocol.H2_PRIOR_KNOWLEDGE))
         .retryOnConnectionFailure(true)
         .build()
 
@@ -47,11 +54,26 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
+    private val cache = object : LinkedHashMap<UUID, Boolean>(CACHE_SIZE, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, Boolean>?): Boolean {
+            return size > CACHE_SIZE
+        }
+    }
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.info("[$accountName] Старт платежа $paymentId")
 
+        val cachedResult = cache[paymentId]
+        if (cachedResult != null) {
+            logger.info("[$accountName] Платеж $paymentId найден в кэше. Результат: $cachedResult")
+            paymentESService.update(paymentId) {
+                it.logProcessing(cachedResult, now(), paymentId, reason = "Cached result")
+            }
+            return
+        }
+
         val transactionId = UUID.randomUUID()
-        val request = buildRequest(paymentId, amount, transactionId)
+        val request = buildRequest(paymentId, amount, transactionId, deadline)
 
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
@@ -93,19 +115,25 @@ class PaymentExternalSystemAdapterImpl(
                 it.logProcessing(false, now(), transactionId, reason = "Max retries exceeded.")
             }
         }
+
+        logQueueAndThreadStats()
     }
 
-    private fun buildRequest(paymentId: UUID, amount: Int, transactionId: UUID): Request {
+    private fun buildRequest(paymentId: UUID, amount: Int, transactionId: UUID, deadline: Long): Request {
         return Request.Builder()
             .url("http://localhost:1234/external/process?serviceName=$serviceName&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
             .post(emptyBody)
+            .addHeader("deadline", deadline.toString())
             .build()
     }
+
     private fun executeWithTimeout(request: Request, transactionId: UUID, paymentId: UUID, attempt: Int, remainingTime: Long, fastFail: Boolean): Boolean {
-        val timeout = min(remainingTime, (5_000L / attempt))
+        val timeout = min(remainingTime, CALL_TIMEOUT_MS)
+        val backoffTime = INITIAL_RETRY_DELAY_MS * (1 shl attempt) + Random.nextLong(JITTER_MS) 
 
         return try {
             val future = CompletableFuture<Boolean>()
+            val startTime = now()
 
             val call = client.newCall(request)
             call.enqueue(object : Callback {
@@ -122,7 +150,7 @@ class PaymentExternalSystemAdapterImpl(
                         when (response.code) {
                             429 -> {
                                 logger.warn("[$accountName] 429 Too Many Requests. Повторный запрос через backoff.")
-                                Thread.sleep((INITIAL_RETRY_DELAY_MS * Random.nextDouble(1.0, 2.0)).toLong())
+                                Thread.sleep(backoffTime)
                                 future.complete(false)
                             }
                             500, 502, 503, 504 -> {
@@ -142,6 +170,7 @@ class PaymentExternalSystemAdapterImpl(
                                 paymentESService.update(paymentId) {
                                     it.logProcessing(result, now(), transactionId, reason = body?.message)
                                 }
+                                cache[paymentId] = result
                                 future.complete(result)
                             }
                         }
@@ -151,19 +180,36 @@ class PaymentExternalSystemAdapterImpl(
                 }
             })
 
-            return future.get(timeout, TimeUnit.MILLISECONDS)
+            val result = future.get(timeout, TimeUnit.MILLISECONDS)
+            val duration = now() - startTime
+            logRequestDuration(duration)
+            result
         } catch (e: TimeoutException) {
             logger.error("[$accountName] Поток $attempt: Тайм-аут ответа.")
-            return false
+            false
         } catch (e: Exception) {
             logger.error("[$accountName] Поток $attempt: Ошибка", e)
-            return false
+            false
         }
     }
 
     private fun shouldEnableFastFail(): Boolean {
         val recentFailCount = recentFailures.count { it > now() - 10_000 }
         return recentFailCount > 3 && recentFailCount.toDouble() / (totalRequests.get() + 1) > FAILURE_THRESHOLD
+    }
+
+    private fun logRequestDuration(duration: Long) {
+        logger.info("[$accountName] Запрос выполнен за $duration мс")
+    }
+
+    private fun logQueueAndThreadStats() {
+        val executorService = executor as ThreadPoolExecutor
+        val activeThreads = executorService.activeCount
+        val queueSize = executorService.queue.size
+        val completedTasks = executorService.completedTaskCount
+        val totalTasks = executorService.taskCount
+
+        logger.info("[$accountName] Статистика потоков: активные=$activeThreads, очередь=$queueSize, завершено=$completedTasks, всего=$totalTasks")
     }
 
     override fun price() = properties.price
