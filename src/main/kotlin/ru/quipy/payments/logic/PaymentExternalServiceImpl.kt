@@ -29,10 +29,11 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
 
         private const val THREAD_SLEEP_MILLIS = 5L
-        private const val PROCESSING_TIME_MILLIS = 3500
-        private const val MAX_RETRY_COUNT = 10
+        private const val PROCESSING_TIME_MILLIS = 6000
+        private const val MAX_RETRY_COUNT = 4
         private val RETRYABLE_HTTP_CODES = setOf(429, 500, 502, 503, 504)
         private const val DELAY_DURATION_MILLIS = 25L
+        private const val MAX_PAYMENT_REQUEST_DURATION = 1500L
     }
 
     private val serviceName = properties.serviceName
@@ -41,7 +42,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient.Builder().callTimeout(Duration.ofMillis(MAX_PAYMENT_REQUEST_DURATION)).build()
     private val rateLimiter = TokenBucketRateLimiter(
         rate = rateLimitPerSec,
         window = 1005,
