@@ -188,15 +188,19 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
+import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
+import java.time.Duration.ofSeconds
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -229,8 +233,11 @@ class PaymentExternalSystemAdapterImpl(
     // private val client = OkHttpClient.Builder().build()
 
     private val client = OkHttpClient.Builder()
-        .readTimeout(10, TimeUnit.SECONDS)
-        .connectTimeout(5, TimeUnit.SECONDS)
+        // .callTimeout((requestAverageProcessingTime.toMillis() * 1.1).toLong(), TimeUnit.MILLISECONDS)
+        // .callTimeout(8, TimeUnit.SECONDS)
+        // .readTimeout(10, TimeUnit.SECONDS)
+        // .connectTimeout(5, TimeUnit.SECONDS)
+        // .writeTimeout(5, TimeUnit.SECONDS)
         .build()
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -246,7 +253,6 @@ class PaymentExternalSystemAdapterImpl(
                 runBlocking {
                     executePaymentWithTimeout(request)
                 }
-
                 // executePayment(request)
             }
         }
@@ -263,8 +269,13 @@ class PaymentExternalSystemAdapterImpl(
                 it.logProcessing(false, now(), UUID.randomUUID(), reason = "Request timeout.")
             }
         }
+        // catch (e: TimeoutException) {
+        //     logger.error("[$accountName] Request timed out for payment ${request.paymentId}", e)
+        //     paymentESService.update(request.paymentId) {
+        //         it.logProcessing(false, now(), UUID.randomUUID(), reason = "Request timeout.")
+        //     }
+        // }
     }
-
 
     private fun executePayment(request: PaymentRequest) {
         val transactionId = UUID.randomUUID()
@@ -303,20 +314,28 @@ class PaymentExternalSystemAdapterImpl(
                         return
                     }
 
-                    when (response.code) {
-                        400, 401, 403, 405 -> {
+                    when (HttpStatus.valueOf(response.code)) {
+                        HttpStatus.BAD_REQUEST,
+                        HttpStatus.UNAUTHORIZED,
+                        HttpStatus.FORBIDDEN,
+                        HttpStatus.NOT_FOUND,
+                        HttpStatus.METHOD_NOT_ALLOWED -> {
                             logger.error("[$accountName] Payment failed permanently for txId: $transactionId, code: ${response.code}")
                             return
                         }
-                        429 -> {
+                        HttpStatus.TOO_MANY_REQUESTS -> {
                             delay *= 2
                         }
-                        503, 500 -> {
+                        // HttpStatus.TOO_MANY_REQUESTS,
+                        HttpStatus.SERVICE_UNAVAILABLE -> {
                             logger.error("[$accountName] Payment failed for txId: $transactionId, code: ${response.code}")
                             val retryAfter = response.headers["Retry-After"]?.toLongOrNull()
-                            if (retryAfter != null) {
+                            retryAfter?.let {
                                 delay = retryAfter * 1000
                             }
+                        }
+                        HttpStatus.INTERNAL_SERVER_ERROR -> {
+                            delay = 0
                         }
                         else -> {
                             logger.error("[$accountName] Payment failed for txId: $transactionId, code: ${response.code}")
@@ -324,7 +343,20 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             } catch (e: Exception) {
-                handleFailure(request, transactionId, e)
+                when (e) {
+                    is SocketTimeoutException -> {
+                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: ${request.paymentId}", e)
+                        paymentESService.update(request.paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    }
+                    else -> {
+                        logger.error("[$accountName] Payment failed for txId: $transactionId, payment: ${request.paymentId}", e)
+                        paymentESService.update(request.paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = e.message)
+                        }
+                    }
+                }
             } finally {
                 processQueue()
             }
@@ -339,27 +371,15 @@ class PaymentExternalSystemAdapterImpl(
                 logger.info("Retrying in ${adjustedDelay}ms (attempt ${attempt + 1})")
                 Thread.sleep(adjustedDelay)
             }
+            // if (attempt < maxRetries) {
+            //     val finalDelay = min(delay, abs(request.deadline - now()))
+            //     logger.info("Retrying in ${finalDelay}ms (attempt ${attempt + 1})")
+            //     Thread.sleep(finalDelay)
+            // }
         }
 
         paymentESService.update(request.paymentId) {
             it.logProcessing(false, now(), transactionId, reason = "Max retries reached")
-        }
-    }
-
-    private fun handleFailure(request: PaymentRequest, transactionId: UUID, e: Exception) {
-        when (e) {
-            is SocketTimeoutException -> {
-                logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: ${request.paymentId}", e)
-                paymentESService.update(request.paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                }
-            }
-            else -> {
-                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: ${request.paymentId}", e)
-                paymentESService.update(request.paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = e.message)
-                }
-            }
         }
     }
 
