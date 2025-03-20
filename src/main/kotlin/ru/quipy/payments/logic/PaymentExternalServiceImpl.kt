@@ -33,6 +33,8 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
+    private val paymentTimeout: Duration? = Duration.ofMillis(1500)
+
     private val client = OkHttpClient.Builder().build()
 
     private val rateLimiter = SlidingWindowRateLimiter(
@@ -60,8 +62,13 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
+        var paymentUrl = "http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
+        if (paymentTimeout != null){
+            paymentUrl += "&timeout=${paymentTimeout}"
+        }
+
         val request = Request.Builder().run {
-            url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+            url(paymentUrl)
             post(emptyBody)
         }.build()
 
@@ -76,7 +83,7 @@ class PaymentExternalSystemAdapterImpl(
 
         try {
             retry(
-                times = 4,
+                times = 2,
                 initialDelay = 20,
                 factor = 2.0,
                 deadline = deadline,
