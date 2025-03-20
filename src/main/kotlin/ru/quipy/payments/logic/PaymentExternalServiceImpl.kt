@@ -30,10 +30,11 @@ class PaymentExternalSystemAdapterImpl(
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
+    private val averageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val paymentTimeout: Duration? = Duration.ofMillis(1500)
+    private val paymentTimeout: Duration? = Duration.ofMillis((averageProcessingTime.toMillis() * 1.25).toLong())
 
     private val client = OkHttpClient.Builder().build()
 
