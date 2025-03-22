@@ -3,7 +3,6 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.*
-import okhttp3.internal.http2.Http2
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -30,18 +29,19 @@ class PaymentExternalSystemAdapterImpl(
         private const val JITTER_MS = 300L
         private const val MAX_PARALLEL_REQUESTS = 6
         private const val FAILURE_THRESHOLD = 0.3
-        private const val CALL_TIMEOUT_MS = 10_000L 
-        private const val CACHE_SIZE = 100 
-        private const val CONNECTION_POOL_SIZE = 10 
+        private const val CALL_TIMEOUT_MS = 10_000L // 10 секунд
+        private const val CACHE_SIZE = 100 // Размер кэша
+        private const val CONNECTION_POOL_SIZE = 10 // Размер пула соединений
     }
 
+    // Пул соединений для повторного использования
     private val connectionPool = ConnectionPool(CONNECTION_POOL_SIZE, 5, TimeUnit.MINUTES)
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(1, TimeUnit.SECONDS) 
-        .readTimeout(3, TimeUnit.SECONDS)  
-        .writeTimeout(1, TimeUnit.SECONDS)  
-        .protocols(listOf(Protocol.H2_PRIOR_KNOWLEDGE))
+        .connectTimeout(1, TimeUnit.SECONDS) // Увеличиваем connect timeout
+        .readTimeout(3, TimeUnit.SECONDS)   // Увеличиваем read timeout
+        .writeTimeout(1, TimeUnit.SECONDS)   // Увеличиваем write timeout
+        .protocols(listOf(Protocol.H2_PRIOR_KNOWLEDGE)) // Используем HTTP/2
         .retryOnConnectionFailure(true)
         .build()
 
@@ -54,6 +54,7 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
+    // Кэш для хранения результатов запросов
     private val cache = object : LinkedHashMap<UUID, Boolean>(CACHE_SIZE, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, Boolean>?): Boolean {
             return size > CACHE_SIZE
@@ -63,6 +64,7 @@ class PaymentExternalSystemAdapterImpl(
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.info("[$accountName] Старт платежа $paymentId")
 
+        // Проверяем кэш перед выполнением запроса
         val cachedResult = cache[paymentId]
         if (cachedResult != null) {
             logger.info("[$accountName] Платеж $paymentId найден в кэше. Результат: $cachedResult")
@@ -116,6 +118,7 @@ class PaymentExternalSystemAdapterImpl(
             }
         }
 
+        // Логгирование состояния очереди и потоков
         logQueueAndThreadStats()
     }
 
@@ -123,13 +126,13 @@ class PaymentExternalSystemAdapterImpl(
         return Request.Builder()
             .url("http://localhost:1234/external/process?serviceName=$serviceName&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
             .post(emptyBody)
-            .addHeader("deadline", deadline.toString())
+            .addHeader("deadline", deadline.toString()) // Передаем дедлайн на сервер
             .build()
     }
 
     private fun executeWithTimeout(request: Request, transactionId: UUID, paymentId: UUID, attempt: Int, remainingTime: Long, fastFail: Boolean): Boolean {
         val timeout = min(remainingTime, CALL_TIMEOUT_MS)
-        val backoffTime = INITIAL_RETRY_DELAY_MS * (1 shl attempt) + Random.nextLong(JITTER_MS) 
+        val backoffTime = INITIAL_RETRY_DELAY_MS * (1 shl attempt) + Random.nextLong(JITTER_MS) // Экспоненциальный backoff
 
         return try {
             val future = CompletableFuture<Boolean>()
@@ -170,7 +173,7 @@ class PaymentExternalSystemAdapterImpl(
                                 paymentESService.update(paymentId) {
                                     it.logProcessing(result, now(), transactionId, reason = body?.message)
                                 }
-                                cache[paymentId] = result
+                                cache[paymentId] = result // Сохраняем результат в кэш
                                 future.complete(result)
                             }
                         }
@@ -200,6 +203,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private fun logRequestDuration(duration: Long) {
         logger.info("[$accountName] Запрос выполнен за $duration мс")
+        // Здесь можно добавить логику для сбора статистики по квантилям
     }
 
     private fun logQueueAndThreadStats() {
