@@ -2,17 +2,17 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import okhttp3.*
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.io.IOException
+import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.min
-import kotlin.random.Random
 
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
@@ -20,205 +20,118 @@ class PaymentExternalSystemAdapterImpl(
 ) : PaymentExternalSystemAdapter {
 
     companion object {
-        private val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
-        private val emptyBody = RequestBody.create(null, ByteArray(0))
-        private val mapper = ObjectMapper().registerKotlinModule()
+        val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
 
-        private const val MAX_RETRIES = 5
-        private const val INITIAL_RETRY_DELAY_MS = 500L
-        private const val JITTER_MS = 300L
-        private const val MAX_PARALLEL_REQUESTS = 6
-        private const val FAILURE_THRESHOLD = 0.3
-        private const val CALL_TIMEOUT_MS = 10_000L // 10 секунд
-        private const val CACHE_SIZE = 100 // Размер кэша
-        private const val CONNECTION_POOL_SIZE = 10 // Размер пула соединений
+        val emptyBody = RequestBody.create(null, ByteArray(0))
+        val mapper = ObjectMapper().registerKotlinModule()
     }
-
-    // Пул соединений для повторного использования
-    private val connectionPool = ConnectionPool(CONNECTION_POOL_SIZE, 5, TimeUnit.MINUTES)
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(1, TimeUnit.SECONDS) // Увеличиваем connect timeout
-        .readTimeout(3, TimeUnit.SECONDS)   // Увеличиваем read timeout
-        .writeTimeout(1, TimeUnit.SECONDS)   // Увеличиваем write timeout
-        .protocols(listOf(Protocol.H2_PRIOR_KNOWLEDGE)) // Используем HTTP/2
-        .retryOnConnectionFailure(true)
-        .build()
-
-    private val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
-
-    private val failedRequests = AtomicInteger(0)
-    private val totalRequests = AtomicInteger(0)
-    private val recentFailures = ConcurrentLinkedQueue<Long>()
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
+    private val requestAverageProcessingTime = properties.averageProcessingTime
+    private val rateLimitPerSec = properties.rateLimitPerSec
+    private val parallelRequests = properties.parallelRequests
 
-    // Кэш для хранения результатов запросов
-    private val cache = object : LinkedHashMap<UUID, Boolean>(CACHE_SIZE, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, Boolean>?): Boolean {
-            return size > CACHE_SIZE
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .readTimeout(Duration.ofSeconds(10))
+        .writeTimeout(Duration.ofSeconds(10))
+        .build()
+
+    private val executor: ExecutorService = Executors.newFixedThreadPool(parallelRequests, object : ThreadFactory {
+        private val threadCount = AtomicInteger(0)
+        override fun newThread(r: Runnable): Thread {
+            return Thread(r, "payment-worker-${threadCount.incrementAndGet()}").apply {
+                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, e ->
+                    logger.error("Uncaught exception in thread ${Thread.currentThread().name}", e)
+                }
+            }
         }
-    }
+    })
+
+    private val semaphore = Semaphore(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        logger.info("[$accountName] Старт платежа $paymentId")
-
-        // Проверяем кэш перед выполнением запроса
-        val cachedResult = cache[paymentId]
-        if (cachedResult != null) {
-            logger.info("[$accountName] Платеж $paymentId найден в кэше. Результат: $cachedResult")
-            paymentESService.update(paymentId) {
-                it.logProcessing(cachedResult, now(), paymentId, reason = "Cached result")
-            }
-            return
-        }
+        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
-        val request = buildRequest(paymentId, amount, transactionId, deadline)
+        logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
 
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        val retryCount = AtomicInteger(0)
-        var isFastFailEnabled = false
-
-        while (retryCount.get() < MAX_RETRIES && now() < deadline) {
-            val remainingTime = deadline - now()
-            if (remainingTime <= 0) {
-                logger.error("[$accountName] Дедлайн истек, платеж $paymentId отменен.")
-                break
-            }
-
-            val attempt = retryCount.incrementAndGet()
-
-            if (!isFastFailEnabled && shouldEnableFastFail()) {
-                logger.warn("[$accountName] Включен FAST-FAIL режим: слишком много отказов.")
-                isFastFailEnabled = true
-            }
-
-            val future = executor.submit<Boolean> {
-                executeWithTimeout(request, transactionId, paymentId, attempt, remainingTime, isFastFailEnabled)
-            }
-
+        executor.submit {
             try {
-                if (future.get(remainingTime, TimeUnit.MILLISECONDS)) break
-            } catch (e: TimeoutException) {
-                logger.warn("[$accountName] Поток $attempt: превысил дедлайн.")
+                semaphore.acquire()
+                processPayment(paymentId, amount, transactionId)
             } catch (e: Exception) {
-                logger.error("[$accountName] Поток $attempt: ошибка выполнения", e)
+                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = e.message)
+                }
+            } finally {
+                semaphore.release()
             }
         }
-
-        if (retryCount.get() >= MAX_RETRIES) {
-            logger.error("[$accountName] Платеж $paymentId провален после $MAX_RETRIES попыток.")
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Max retries exceeded.")
-            }
-        }
-
-        // Логгирование состояния очереди и потоков
-        logQueueAndThreadStats()
     }
 
-    private fun buildRequest(paymentId: UUID, amount: Int, transactionId: UUID, deadline: Long): Request {
-        return Request.Builder()
-            .url("http://localhost:1234/external/process?serviceName=$serviceName&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-            .post(emptyBody)
-            .addHeader("deadline", deadline.toString()) // Передаем дедлайн на сервер
-            .build()
-    }
+    private fun processPayment(paymentId: UUID, amount: Int, transactionId: UUID) {
+        val request = Request.Builder().run {
+            url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+            post(emptyBody)
+        }.build()
 
-    private fun executeWithTimeout(request: Request, transactionId: UUID, paymentId: UUID, attempt: Int, remainingTime: Long, fastFail: Boolean): Boolean {
-        val timeout = min(remainingTime, CALL_TIMEOUT_MS)
-        val backoffTime = INITIAL_RETRY_DELAY_MS * (1 shl attempt) + Random.nextLong(JITTER_MS) // Экспоненциальный backoff
-
-        return try {
-            val future = CompletableFuture<Boolean>()
-            val startTime = now()
-
-            val call = client.newCall(request)
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    logger.error("[$accountName] Поток $attempt: Ошибка запроса", e)
-                    failedRequests.incrementAndGet()
-                    recentFailures.add(now())
-                    future.complete(false)
+        try {
+            client.newCall(request).execute().use { response ->
+                val body = try {
+                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                } catch (e: Exception) {
+                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
-                override fun onResponse(call: Call, response: Response) {
-                    totalRequests.incrementAndGet()
-                    try {
-                        when (response.code) {
-                            429 -> {
-                                logger.warn("[$accountName] 429 Too Many Requests. Повторный запрос через backoff.")
-                                Thread.sleep(backoffTime)
-                                future.complete(false)
-                            }
-                            500, 502, 503, 504 -> {
-                                logger.warn("[$accountName] Ошибка ${response.code}, отправляем в очередь на повтор.")
-                                future.complete(false)
-                            }
-                            else -> {
-                                val body = response.body?.string()?.let {
-                                    try {
-                                        mapper.readValue(it, ExternalSysResponse::class.java)
-                                    } catch (e: Exception) {
-                                        logger.error("[$accountName] Ошибка парсинга ответа: ${e.message}")
-                                        null
-                                    }
-                                }
-                                val result = body?.result ?: false
-                                paymentESService.update(paymentId) {
-                                    it.logProcessing(result, now(), transactionId, reason = body?.message)
-                                }
-                                cache[paymentId] = result // Сохраняем результат в кэш
-                                future.complete(result)
-                            }
-                        }
-                    } finally {
-                        response.close()
+                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+                paymentESService.update(paymentId) {
+                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                }
+            }
+        } catch (e: Exception) {
+            when (e) {
+                is SocketTimeoutException -> {
+                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                     }
                 }
-            })
 
-            val result = future.get(timeout, TimeUnit.MILLISECONDS)
-            val duration = now() - startTime
-            logRequestDuration(duration)
-            result
-        } catch (e: TimeoutException) {
-            logger.error("[$accountName] Поток $attempt: Тайм-аут ответа.")
-            false
-        } catch (e: Exception) {
-            logger.error("[$accountName] Поток $attempt: Ошибка", e)
-            false
+                else -> {
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = e.message)
+                    }
+                }
+            }
         }
-    }
-
-    private fun shouldEnableFastFail(): Boolean {
-        val recentFailCount = recentFailures.count { it > now() - 10_000 }
-        return recentFailCount > 3 && recentFailCount.toDouble() / (totalRequests.get() + 1) > FAILURE_THRESHOLD
-    }
-
-    private fun logRequestDuration(duration: Long) {
-        logger.info("[$accountName] Запрос выполнен за $duration мс")
-        // Здесь можно добавить логику для сбора статистики по квантилям
-    }
-
-    private fun logQueueAndThreadStats() {
-        val executorService = executor as ThreadPoolExecutor
-        val activeThreads = executorService.activeCount
-        val queueSize = executorService.queue.size
-        val completedTasks = executorService.completedTaskCount
-        val totalTasks = executorService.taskCount
-
-        logger.info("[$accountName] Статистика потоков: активные=$activeThreads, очередь=$queueSize, завершено=$completedTasks, всего=$totalTasks")
     }
 
     override fun price() = properties.price
+
     override fun isEnabled() = properties.enabled
+
     override fun name() = properties.accountName
+
+    fun shutdown() {
+        executor.shutdown()
+        try {
+            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                executor.shutdownNow()
+            }
+        } catch (e: InterruptedException) {
+            executor.shutdownNow()
+        }
+    }
 }
 
-fun now() = System.currentTimeMillis()
+public fun now() = System.currentTimeMillis()
