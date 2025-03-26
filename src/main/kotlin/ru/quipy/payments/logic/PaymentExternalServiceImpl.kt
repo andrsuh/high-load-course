@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -37,10 +38,11 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val semaphore = Semaphore(parallelRequests)
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient.Builder().callTimeout(Duration.ofSeconds(2)).build()
 
     private val maxRetries = 3
-    private val delay = 450L
+    private val delay = 0L
+    private val requiredRequestMillis = 1500
 
 
 
@@ -66,7 +68,7 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
-            val remainedTime = (deadline - now() - 1000)
+            val remainedTime = (deadline - now() - requiredRequestMillis)
 
             if (remainedTime <= 0 || !semaphore.tryAcquire(remainedTime, TimeUnit.MILLISECONDS)) {
                 paymentESService.update(paymentId) {
@@ -81,7 +83,6 @@ class PaymentExternalSystemAdapterImpl(
                 }.build()
 
                 client.newCall(request).execute().use { response ->
-                    logger.info(response.code.toString())
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
@@ -104,6 +105,16 @@ class PaymentExternalSystemAdapterImpl(
                         logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    }
+
+                    is InterruptedIOException -> {
+                        needRetry = tryCount++ < maxRetries
+
+                        logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = e.message)
                         }
                     }
 
