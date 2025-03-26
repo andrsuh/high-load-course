@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.RateLimiter
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
@@ -23,6 +25,9 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    @Autowired
+    private lateinit var rateLimiter: SlidingWindowRateLimiter
+
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -34,6 +39,7 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
+        rateLimiter.tickBlocking()
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(
