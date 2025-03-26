@@ -4,10 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.*
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.CountingRateLimiter
+import ru.quipy.common.utils.FixedWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.io.IOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -33,56 +32,42 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val connectionTimeout = requestAverageProcessingTime
+//        .plusMillis(requestAverageProcessingTime.toMillis() / 2)
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(requestAverageProcessingTime.plusMillis(requestAverageProcessingTime.toMillis() / 2))
+        .connectTimeout(connectionTimeout)
+        .readTimeout(connectionTimeout)
+        .callTimeout(connectionTimeout)
+        .writeTimeout(connectionTimeout)
         .build()
 
-    private val second_in_ms = 1000L
-    private val parts = rateLimitPerSec
-    private val partsIn = parallelRequests
-    private val eps = requestAverageProcessingTime.toMillis() / 2
-    private val rateLimiter = CountingRateLimiter(rateLimitPerSec / parts, second_in_ms / parts, TimeUnit.MILLISECONDS)
-    private val inputLimiter = CountingRateLimiter(parallelRequests / partsIn, requestAverageProcessingTime.toMillis() / partsIn, TimeUnit.MILLISECONDS)
     private val semaphore = Semaphore(parallelRequests)
+    private val inputLimiter = FixedWindowRateLimiter((parallelRequests * 1000L /  requestAverageProcessingTime.toMillis()).toInt(), 1000L, TimeUnit.MILLISECONDS)
+    private val rateLimiter = FixedWindowRateLimiter(rateLimitPerSec, 1000L, TimeUnit.MILLISECONDS)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
 
-        while (!inputLimiter.tick()) {
-            Thread.sleep(100)
-            if (deadline < now() + requestAverageProcessingTime.toMillis() + eps) {
-                logger.info("UwU")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                }
-                return
+        inputLimiter.tickBlocking()
+        if (deadline < now() + requestAverageProcessingTime.toMillis()) {
+            logger.info("UwU")
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
             }
+            return
         }
-
         semaphore.acquire()
-        logger.info("Аcquire. Semaphore queue length: ${semaphore.queueLength}")
-        if (deadline < now() + requestAverageProcessingTime.toMillis() + eps) {
+        rateLimiter.tickBlocking()
+        if (deadline < now() + requestAverageProcessingTime.toMillis()) {
             semaphore.release()
             logger.info("Release because of deadline. Semaphore queue length: ${semaphore.queueLength}")
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
             }
             return
-        }
-
-        while (!rateLimiter.tick()) {
-            Thread.sleep(100)
-            if (deadline < now() + requestAverageProcessingTime.toMillis() + eps) {
-                semaphore.release()
-                logger.info("Release because of deadline. Semaphore queue length: ${semaphore.queueLength}")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                }
-                return
-            }
         }
 
         logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
@@ -98,6 +83,7 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
+            val startTime = now()
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
@@ -113,10 +99,11 @@ class PaymentExternalSystemAdapterImpl(
                 paymentESService.update(paymentId) {
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
+                logger.info("completed, time = ${startTime - now()}ms")
 
                 semaphore.release()
                 logger.info("Release. Semaphore queue length: ${semaphore.queueLength}")
-                if (!body.result && body.message == null) {
+                if (!body.result) {
                     performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
                 }
             }
@@ -124,9 +111,6 @@ class PaymentExternalSystemAdapterImpl(
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                    }
                     semaphore.release()
                     logger.info("Release. Semaphore queue length: ${semaphore.queueLength}")
                     performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
@@ -134,10 +118,6 @@ class PaymentExternalSystemAdapterImpl(
 
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
                     semaphore.release()
                     logger.info("Release. Semaphore queue length: ${semaphore.queueLength}")
                     performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
