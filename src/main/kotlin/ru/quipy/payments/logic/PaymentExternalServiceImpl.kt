@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -34,9 +35,12 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
-    private val semaphore = Semaphore(5)
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val semaphore = Semaphore(parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
+
+
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -50,7 +54,16 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        if (!semaphore.tryAcquire(54, TimeUnit.SECONDS)) {
+        if (!rateLimiter.tickBlocking(deadline - now())) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId)
+            }
+            return
+        }
+
+        val remainedTime = (deadline - now() - 8000)
+
+        if (remainedTime <= 0 || !semaphore.tryAcquire(remainedTime, TimeUnit.MILLISECONDS)) {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId)
             }
