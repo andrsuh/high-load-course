@@ -11,6 +11,9 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeoutException
 
 
 // Advice: always treat time as a Duration
@@ -31,6 +34,7 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val semaphore = Semaphore(5)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -46,12 +50,19 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        val request = Request.Builder().run {
-            url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-            post(emptyBody)
-        }.build()
+        if (!semaphore.tryAcquire(54, TimeUnit.SECONDS)) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId)
+            }
+            return
+        }
 
         try {
+            val request = Request.Builder().run {
+                url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+                post(emptyBody)
+            }.build()
+
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
@@ -85,6 +96,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            semaphore.release()
         }
     }
 
