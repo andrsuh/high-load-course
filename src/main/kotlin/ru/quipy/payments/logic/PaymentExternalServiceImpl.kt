@@ -13,7 +13,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Semaphore
+import java.util.concurrent.*
 
 
 // Advice: always treat time as a Duration
@@ -34,7 +34,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val paymentTimeout: Duration? = Duration.ofMillis((averageProcessingTime.toMillis() * 1.25).toLong())
+    private val paymentTimeout: Duration? = Duration.ofMillis((averageProcessingTime.toMillis() * 3).toLong())
 
     private val client = OkHttpClient.Builder().build()
 
@@ -43,74 +43,86 @@ class PaymentExternalSystemAdapterImpl(
         window = Duration.ofMillis(500)
     )
 
+    private val pool = ThreadPoolExecutor(
+        parallelRequests, // corePoolSize
+        parallelRequests * 2, // maximumPoolSize
+        Duration.ofMinutes(5).toMillis(), // keepAliveTime (5 min?)
+        TimeUnit.MILLISECONDS, // time unit for keepAliveTime
+        LinkedBlockingQueue(), // workQueue
+        Executors.defaultThreadFactory(), // threadFactory
+        ThreadPoolExecutor.AbortPolicy() // rejection handler
+    )
+
     private val parallelRequestsSemaphore = Semaphore(parallelRequests)
 
     private val queueScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        queueScope.launch {
+        pool.submit(Runnable {
             performPaymentCore(paymentId, amount, paymentStartedAt, deadline)
-        }
+        })
     }
 
-    private suspend fun performPaymentCore(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        val transactionId = UUID.randomUUID()
-        logger.info("[$accountName] Processing payment: $paymentId, txId: $transactionId")
+    private fun performPaymentCore(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        queueScope.launch {
+            val transactionId = UUID.randomUUID()
+            logger.info("[$accountName] Processing payment: $paymentId, txId: $transactionId")
 
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-        }
+            // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
+            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
+            paymentESService.update(paymentId) {
+                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+            }
 
         var paymentUrl = "http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
         if (paymentTimeout != null){
             paymentUrl += "&timeout=${paymentTimeout}"
         }
 
-        val request = Request.Builder().run {
-            url(paymentUrl)
-            post(emptyBody)
-        }.build()
+            val request = Request.Builder().run {
+                url(paymentUrl)
+                post(emptyBody)
+            }.build()
 
-        if (!rateLimiter.tick()) {
-            logger.warn("[$accountName] Payment $paymentId delayed due to rate limit")
-            rateLimiter.tickBlocking()
-        }
-
-        withContext(Dispatchers.IO) {
-            parallelRequestsSemaphore.acquire()
-        }
-
-        try {
-            retry(
-                times = 2,
-                initialDelay = 20,
-                factor = 2.0,
-                deadline = deadline,
-                shouldRetry = { response -> !response.result }
-            ) {
-                executePaymentRequest(request, transactionId, paymentId)
+            if (!rateLimiter.tick()) {
+                logger.warn("[$accountName] Payment $paymentId delayed due to rate limit")
+                rateLimiter.tickBlocking()
             }
-        } catch (e: Exception) {
-            when (e) {
-                is SocketTimeoutException -> {
-                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+
+            withContext(Dispatchers.IO) {
+                parallelRequestsSemaphore.acquire()
+            }
+
+            try {
+                retry(
+                    times = 2,
+                    initialDelay = 20,
+                    factor = 2.0,
+                    deadline = deadline,
+                    shouldRetry = { response -> !response.result }
+                ) {
+                    executePaymentRequest(request, transactionId, paymentId)
+                }
+            } catch (e: Exception) {
+                when (e) {
+                    is SocketTimeoutException -> {
+                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    }
+
+                    else -> {
+                        logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = e.message)
+                        }
                     }
                 }
-
-                else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
-                }
+            } finally {
+                parallelRequestsSemaphore.release()
             }
-        } finally {
-            parallelRequestsSemaphore.release()
         }
     }
 
