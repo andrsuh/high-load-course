@@ -9,9 +9,10 @@ import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.logic.MetricInterceptor.OkHttpMetricsInterceptor
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
@@ -36,7 +37,6 @@ class PaymentExternalSystemAdapterImpl(
         private const val MAX_RETRY_COUNT = 3
         private val RETRYABLE_HTTP_CODES = setOf(429, 500, 502, 503, 504)
         private const val DELAY_DURATION_MILLIS = 25L
-        private const val MAX_PAYMENT_REQUEST_DURATION = 1500L
     }
 
     private val serviceName = properties.serviceName
@@ -44,12 +44,14 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val MAX_PAYMENT_REQUEST_DURATION = properties.averageProcessingTime.toMillis() * 2
     private val v = AtomicInteger(0)
     val responseTimes = ConcurrentLinkedQueue<Long>()
 
     private val client = OkHttpClient.Builder()
+        .addInterceptor(OkHttpMetricsInterceptor())
         .callTimeout(Duration.ofMillis(MAX_PAYMENT_REQUEST_DURATION))
-        .build()
+        .build();
     private val rateLimiter = TokenBucketRateLimiter(
         rate = rateLimitPerSec,
         window = 1005,
