@@ -12,7 +12,10 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.payments.logic.*
+import ru.quipy.payments.logic.PaymentAccountProperties
+import ru.quipy.payments.logic.PaymentAggregateState
+import ru.quipy.payments.logic.PaymentExternalSystemAdapter
+import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -30,7 +33,7 @@ class PaymentAccountsConfig {
     @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
 
-    private val allowedAccounts = setOf("acc-19", "acc-20", "acc-21")
+    private val allowedAccounts = setOf("acc-16")
 
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
