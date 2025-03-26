@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     networks:
       - external_network
+    depends_on:
+      - postgres
     environment:
       TEST_SERVICE_IP: "host.docker.internal"
       POSTGRES_ADDRESS: ${POSTGRES_ADDRESS}
@@ -46,6 +48,7 @@ services:
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.32.0
+    user: root
     volumes:
       - ./prometheus/data:/prometheus
       - ./prometheus:/etc/prometheus
@@ -61,6 +64,7 @@ services:
 
   grafana:
     image: grafana/grafana
+    user: root
     volumes:
       - ./grafana/data:/var/lib/grafana
       - ./grafana/provisioning/:/etc/grafana/provisioning
