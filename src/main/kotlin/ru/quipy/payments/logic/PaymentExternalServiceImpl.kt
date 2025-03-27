@@ -34,7 +34,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val paymentTimeout: Duration? = Duration.ofMillis((averageProcessingTime.toMillis() * 3).toLong())
+    private val paymentTimeout: Duration? = Duration.ofMillis(1500)
 
     private val client = OkHttpClient.Builder().build()
 
