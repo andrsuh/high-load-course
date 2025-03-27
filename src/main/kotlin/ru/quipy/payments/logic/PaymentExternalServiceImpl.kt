@@ -19,6 +19,7 @@ import java.util.concurrent.*
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
+    private val resiliencePolicy: ResiliencePolicy,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 ) : PaymentExternalSystemAdapter {
 
@@ -28,25 +29,30 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
     }
 
+    // Resilience policies
+    private val timeoutPolicy = resiliencePolicy.timeout
+    private val retryPolicy = resiliencePolicy.retry
+    private val rateLimiterPolicy = resiliencePolicy.rateLimiter
+    private val threadPoolPolicy = resiliencePolicy.threadPool
+
+    // Account properties
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
     private val averageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val paymentTimeout: Duration? = Duration.ofMillis(1500)
-
     private val client = OkHttpClient.Builder().build()
 
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
-        window = Duration.ofMillis(500)
+        window = rateLimiterPolicy.window
     )
 
     private val pool = ThreadPoolExecutor(
         parallelRequests, // corePoolSize
         parallelRequests * 2, // maximumPoolSize
-        Duration.ofMinutes(5).toMillis(), // keepAliveTime (5 min?)
+        threadPoolPolicy.keepAliveTime.toMillis(), // keepAliveTime
         TimeUnit.MILLISECONDS, // time unit for keepAliveTime
         LinkedBlockingQueue(), // workQueue
         Executors.defaultThreadFactory(), // threadFactory
@@ -74,10 +80,10 @@ class PaymentExternalSystemAdapterImpl(
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
             }
 
-        var paymentUrl = "http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
-        if (paymentTimeout != null){
-            paymentUrl += "&timeout=${paymentTimeout}"
-        }
+            var paymentUrl = "http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
+            if (timeoutPolicy.requestTimeout != null) {
+                paymentUrl += "&timeout=${timeoutPolicy.requestTimeout}"
+            }
 
             val request = Request.Builder().run {
                 url(paymentUrl)
@@ -95,10 +101,8 @@ class PaymentExternalSystemAdapterImpl(
 
             try {
                 retry(
-                    times = 2,
-                    initialDelay = 20,
-                    factor = 2.0,
-                    deadline = deadline,
+                    retryPolicy,
+                    deadline,
                     shouldRetry = { response -> !response.result }
                 ) {
                     executePaymentRequest(request, transactionId, paymentId)
@@ -148,7 +152,24 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     private suspend fun <T> retry(
-        times: Int = 1,
+        policy: RetryPolicy,
+        deadline: Long,
+        shouldRetry: (T) -> Boolean,
+        block: suspend () -> T
+    ): T{
+        return retry(
+            maxAttempts = policy.maxAttempts,
+            initialDelay = policy.initialDelay.toMillis(),
+            maxDelay = policy.maxDelay.toMillis(),
+            factor = policy.factor,
+            deadline,
+            shouldRetry,
+            block
+        )
+    }
+
+    private suspend fun <T> retry(
+        maxAttempts: Int = 2,
         initialDelay: Long = 100,
         maxDelay: Long = 1000,
         factor: Double = 1.0,
@@ -158,7 +179,7 @@ class PaymentExternalSystemAdapterImpl(
     ): T {
         var currentDelay = initialDelay
 
-        repeat(times) { attempt ->
+        repeat(maxAttempts - 1) { attempt ->
             val result = block()
 
             if (!shouldRetry(result))

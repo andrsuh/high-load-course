@@ -21,7 +21,8 @@ import java.util.*
 
 
 @Configuration
-class PaymentAccountsConfig {
+class PaymentAccountsConfig(private val resiliencePolicy: ResiliencePolicy) {
+
     companion object {
         private val javaClient = HttpClient.newBuilder().build()
         private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
@@ -49,6 +50,6 @@ class PaymentAccountsConfig {
             .filter {
                 it.accountName in allowedAccounts
             }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it, paymentService) }
+            .map { PaymentExternalSystemAdapterImpl(it, resiliencePolicy, paymentService) }
     }
 }
