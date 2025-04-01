@@ -14,7 +14,6 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.Semaphore
 
-
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
@@ -35,11 +34,13 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient.Builder()
+        .callTimeout(Duration.ofMillis(requestAverageProcessingTime.toMillis() + 100))
+        .build()
 
-    private val rt = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds (1))
+    private val rt = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
 
-    private var semaphore = Semaphore (parallelRequests, true)
+    private var semaphore = Semaphore(parallelRequests, true)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -60,7 +61,7 @@ class PaymentExternalSystemAdapterImpl(
 
         semaphore.acquire()
 
-        if (willCompleteAfterDeadline(deadline)) {
+        if (expireByDeadline(deadline)) {
             logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough parallel requests")
             paymentESService.update(paymentId) {
                 it.logProcessing(
@@ -77,7 +78,7 @@ class PaymentExternalSystemAdapterImpl(
 
         rt.tickBlocking()
 
-        if (willCompleteAfterDeadline(deadline)) {
+        if (expireByDeadline(deadline)) {
             logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough rps tokens")
             paymentESService.update(paymentId) {
                 it.logProcessing(
@@ -93,7 +94,6 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         try {
-
             executeRequest(request, transactionId, paymentId, deadline)
         } catch (e: Exception) {
             when (e) {
@@ -123,7 +123,7 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
-    private fun willCompleteAfterDeadline(deadline: Long): Boolean {
+    private fun expireByDeadline(deadline: Long): Boolean {
         val expectedEnd = now() + requestAverageProcessingTime.toMillis() * 2
 
         return expectedEnd >= deadline
@@ -142,28 +142,45 @@ class PaymentExternalSystemAdapterImpl(
             return
         }
 
-        client.newCall(request).execute().use { response ->
-            val body = try {
-                mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-            } catch (e: Exception) {
-                logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-            }
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.code > 200) {
+                    logger.error("response code ${response.code}")
+                }
 
-            if ((availableHTTPCodesToRetry.contains(response.code) || !body.result) && !willCompleteAfterDeadline(deadline)) {
+                val body = try {
+                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                } catch (e: Exception) {
+                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                }
+
+                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+                if ((availableHTTPCodesToRetry.contains(response.code) || !body.result) && !expireByDeadline(deadline)) {
+                    val delta = now() - firstAttemptTime
+                    if (delta <= 1000) {
+                        Thread.sleep(1000 - delta)
+                    }
+                    executeRequest(request, transactionId, paymentId, deadline, times)
+                } else {
+                    // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+                    // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: false, message: client exception")
+            if (!expireByDeadline(deadline)) {
                 val delta = now() - firstAttemptTime
                 if (delta <= 1000) {
                     Thread.sleep(1000 - delta)
                 }
                 executeRequest(request, transactionId, paymentId, deadline, times)
-            }
-
-            logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-            // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-            // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-            paymentESService.update(paymentId) {
-                it.logProcessing(body.result, now(), transactionId, reason = body.message)
+            } else {
+                throw e
             }
         }
     }
