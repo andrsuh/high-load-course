@@ -19,7 +19,6 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.util.*
 
-
 @Configuration
 class PaymentAccountsConfig {
     companion object {
