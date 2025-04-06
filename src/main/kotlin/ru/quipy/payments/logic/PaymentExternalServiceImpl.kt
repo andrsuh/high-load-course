@@ -12,7 +12,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.*
+import java.util.concurrent.Semaphore
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -42,18 +42,6 @@ class PaymentExternalSystemAdapterImpl(
 
     private var semaphore = Semaphore(parallelRequests, true)
 
-    private val pool = ThreadPoolExecutor(
-        8, // corePoolSize
-        16, // maximumPoolSize
-        15, // keepAliveTime
-        TimeUnit.MINUTES, // time unit for keepAliveTime
-        LinkedBlockingQueue(8), // workQueue
-        Executors.defaultThreadFactory(), // threadFactory
-        ThreadPoolExecutor.AbortPolicy() // rejection handler
-    )
-
-    private val cachedPool = Executors.newCachedThreadPool()
-
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
@@ -71,74 +59,61 @@ class PaymentExternalSystemAdapterImpl(
             post(emptyBody)
         }.build()
 
+        semaphore.acquire()
+
+        if (expireByDeadline(deadline)) {
+            logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough parallel requests")
+            paymentESService.update(paymentId) {
+                it.logProcessing(
+                    success = false,
+                    now(),
+                    transactionId,
+                    reason = "Request would complete after deadline. No point in processing"
+                )
+            }
+
+            semaphore.release()
+            return
+        }
+
+        rt.tickBlocking()
+
+        if (expireByDeadline(deadline)) {
+            logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough rps tokens")
+            paymentESService.update(paymentId) {
+                it.logProcessing(
+                    success = false,
+                    now(),
+                    transactionId,
+                    reason = "Request would complete after deadline. No point in processing"
+                )
+            }
+
+            semaphore.release()
+            return
+        }
+
         try {
-            pool.submit {
-                semaphore.acquire()
-
-                if (expireByDeadline(deadline)) {
-                    logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough parallel requests")
+            executeRequest(request, transactionId, paymentId, deadline)
+        } catch (e: Exception) {
+            when (e) {
+                is SocketTimeoutException -> {
+                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                     paymentESService.update(paymentId) {
-                        it.logProcessing(
-                            success = false,
-                            now(),
-                            transactionId,
-                            reason = "Request would complete after deadline. No point in processing"
-                        )
+                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                     }
-
-                    semaphore.release()
-                    return@submit
                 }
 
-                rt.tickBlocking()
+                else -> {
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
-                if (expireByDeadline(deadline)) {
-                    logger.error("[$accountName] Payment would complete after deadline for txId: $transactionId, payment: $paymentId, stage: enough rps tokens")
                     paymentESService.update(paymentId) {
-                        it.logProcessing(
-                            success = false,
-                            now(),
-                            transactionId,
-                            reason = "Request would complete after deadline. No point in processing"
-                        )
+                        it.logProcessing(false, now(), transactionId, reason = e.message)
                     }
-
-                    semaphore.release()
-                    return@submit
-                }
-
-                try {
-                    executeRequest(request, transactionId, paymentId, deadline)
-                } catch (e: Exception) {
-                    when (e) {
-                        is SocketTimeoutException -> {
-                            logger.error(
-                                "[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId",
-                                e
-                            )
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                            }
-                        }
-
-                        else -> {
-                            logger.error(
-                                "[$accountName] Payment failed for txId: $transactionId, payment: $paymentId",
-                                e
-                            )
-
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(false, now(), transactionId, reason = e.message)
-                            }
-                        }
-                    }
-                } finally {
-                    semaphore.release()
                 }
             }
-        } catch (e: RejectedExecutionException) {
-            logger.error("submit exception ...", e)
-            performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+        } finally {
+            semaphore.release()
         }
     }
 
