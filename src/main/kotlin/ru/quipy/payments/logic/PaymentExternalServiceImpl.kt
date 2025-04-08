@@ -1,26 +1,25 @@
 package ru.quipy.payments.logic
 
 import kotlinx.coroutines.*
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import java.util.concurrent.Semaphore
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.*
 import ru.quipy.common.utils.exceptions.RETRIABLE_PROCESSING_FAIL_REASONS
 import ru.quipy.common.utils.exceptions.RequestProcessingException
-import ru.quipy.config.SUCCESS_QUANTILE
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.payments.dto.FinishedRequest
 import ru.quipy.payments.dto.InFlightRequest
 import ru.quipy.payments.dto.PendingRequest
 import java.net.SocketTimeoutException
-import java.time.Duration
 import java.util.*
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.max
 import kotlin.math.min
-import kotlin.random.Random
+import com.google.common.util.concurrent.RateLimiter
 
 
 // Advice: always treat time as a Duration
@@ -29,13 +28,13 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 ) : PaymentExternalSystemAdapter {
     private val scheduledExecutorScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
-    private val urlBuilder = StringBuilder(256)
 
     companion object {
-        val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
-
         val emptyBody = ByteArray(0).toRequestBody(contentType = null)
     }
+
+    private val outgoingRateLimiter = RateLimiter.create(1100.0)
+    private val inFlightRequestsLimiter = Semaphore(20000)
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
@@ -43,24 +42,37 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val requestsQueue = PriorityBlockingQueue<PendingRequest>(parallelRequests)
-    private val outgoingRateLimiter = CompositeRateLimiter(
-        SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L)),
-        LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L), selectMaxRps().toInt())
-    )
-    private val inFlightRequestsLimiter = Semaphore(parallelRequests)
-
-    private val externalSystemAnalyzer = ExternalSystemAnalyzer()
+    private val requestsQueue = LinkedBlockingDeque<PendingRequest>(parallelRequests)
 
     private val coreExecutor = ThreadPoolExecutor(
-        64,
-        64,
-        0L,
-        TimeUnit.MILLISECONDS,
-        PriorityBlockingQueue(),
+        512,
+        1024,
+        30L,
+        TimeUnit.SECONDS,
+        LinkedBlockingQueue(200000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
+
+    private val client = OkHttpClient
+        .Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectionPool(
+            ConnectionPool(
+                maxIdleConnections = 2000,  // Макс. количество бездействующих соединений
+                keepAliveDuration = 1,    // Время жизни соединения
+                timeUnit = TimeUnit.MINUTES
+            )
+        )
+        .pingInterval(100, TimeUnit.MILLISECONDS)
+        .dispatcher(Dispatcher().apply {
+            maxRequests = 20000
+            maxRequestsPerHost = 20000
+        })
+        .protocols(listOf(Protocol.H2_PRIOR_KNOWLEDGE))
+        .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         val transactionId = UUID.randomUUID()
@@ -73,22 +85,45 @@ class PaymentExternalSystemAdapterImpl(
                 paymentStartedAt,
                 getMaxRetries(amount, deadline),
                 deadline,
-                accountName
+                accountName,
+                client
             )
+
+        val url = buildUrl(pendingRequest)
+        pendingRequest.setUrl(url)
+
         requestsQueue.add(pendingRequest)
     }
 
     override fun submitPayments() {
-        val requests = (1..100).mapNotNull { requestsQueue.poll() }
+        val batchSize = min(100, inFlightRequestsLimiter.availablePermits())
+        val requests = mutableListOf<PendingRequest>()
 
-        requests.forEach { paymentRequest ->
-            val url = buildUrl(paymentRequest)
-            coreExecutor.execute(createOptimizedRequest(paymentRequest, url))
+        requestsQueue.drainTo(requests, batchSize)
+
+        if (requests.isEmpty()) return
+
+        if (!outgoingRateLimiter.tryAcquire(requests.size)) {
+            requestsQueue.addAll(requests)
+            return
+        }
+
+        inFlightRequestsLimiter.acquire(requests.size)
+
+        requests.forEach { request ->
+            CompletableFuture.runAsync({
+                InFlightRequest(
+                    request, paymentESService,
+                    2 * requestAverageProcessingTime.toMillis(), ::handleException
+                ).run().whenComplete { _, _ -> inFlightRequestsLimiter.release() }
+
+            }, coreExecutor)
         }
     }
 
     private fun buildUrl(request: PendingRequest): String {
-        urlBuilder.clear()
+        val urlBuilder = StringBuilder(256)
+
         return urlBuilder.apply {
             append("http://localhost:1234/external/process?")
             append("serviceName=$serviceName&")
@@ -96,29 +131,9 @@ class PaymentExternalSystemAdapterImpl(
             append("transactionId=${request.transactionId}&")
             append("paymentId=${request.paymentId}&")
             append("amount=${request.amount}&")
-            append("timeout=PT${"%.3f".format(requestAverageProcessingTime.toMillis()/1000.00)}s")
+            append("timeout=PT${"%.3f".format(2 * requestAverageProcessingTime.toMillis() / 1000.00)}s")
         }.toString()
     }
-
-    private fun createOptimizedRequest(paymentRequest: PendingRequest, url: String) =
-        object : InFlightRequest(paymentRequest, paymentESService, url,
-            requestAverageProcessingTime.toMillis(), ::handleException) {
-
-            override fun run() = runBlocking {
-                try {
-                    outgoingRateLimiter.tickBlocking()
-                    inFlightRequestsLimiter.acquireUninterruptibly()
-                    super.run()
-                    withContext(Dispatchers.IO) {
-                        externalSystemAnalyzer.addFinished(FinishedRequest(processingDuration))
-                    }
-                } catch (e: Throwable) {
-                    handleException(paymentRequest, e)
-                } finally {
-                    inFlightRequestsLimiter.release()
-                }
-            }
-        }
 
     override fun price() = properties.price
 
@@ -137,19 +152,12 @@ class PaymentExternalSystemAdapterImpl(
     private fun handleException(paymentRequest: PendingRequest, e: Throwable) {
         when (e) {
             is SocketTimeoutException -> {
-                logger.error(
-                    "[$accountName] Payment timeout for txId: ${paymentRequest.transactionId}, payment: ${paymentRequest.paymentId}"
-                )
                 paymentESService.update(paymentRequest.paymentId) {
                     it.logProcessing(false, now(), paymentRequest.transactionId, reason = "Request timeout.")
                 }
             }
 
             is RequestProcessingException -> {
-                logger.error(
-                    "[$accountName] Request processing failed for txId: ${paymentRequest.transactionId}, payment: ${paymentRequest.paymentId}. Reason: ${e.failReason}. Message: ${e.message}"
-                )
-
                 paymentESService.update(paymentRequest.paymentId) {
                     it.logProcessing(false, now(), paymentRequest.transactionId, reason = e.message)
                 }
@@ -161,11 +169,6 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             else -> {
-                logger.error(
-                    "[$accountName] Payment failed for txId: ${paymentRequest.transactionId}, payment: ${paymentRequest.paymentId}",
-                    e
-                )
-
                 paymentESService.update(paymentRequest.paymentId) {
                     it.logProcessing(false, now(), paymentRequest.transactionId, reason = e.message)
                 }
@@ -173,29 +176,12 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    private fun cleanup() {
-        while (requestsQueue.peek() !== null && requestsQueue.peek().deadline + requestAverageProcessingTime.toMillis() < now()) {
-            val paymentRequest = requestsQueue.poll()
-
-            paymentESService.update(paymentRequest.paymentId) {
-                it.logProcessing(false, now(), paymentRequest.transactionId, reason = "Timeout")
-            }
-        }
-    }
-
     private val maintenanceJob = scheduledExecutorScope.launch {
         while (true) {
-            val startTime = System.currentTimeMillis()
-
-            // Чередуем выполнение задач
-            if (Random.nextBoolean()) {
+            CompletableFuture.runAsync {
                 submitPayments()
-            } else {
-                cleanup()
             }
-
-            val processingTime = System.currentTimeMillis() - startTime
-            delay(maxOf(10L, 50L - processingTime))
+            delay(50L)
         }
     }
 
@@ -211,15 +197,6 @@ class PaymentExternalSystemAdapterImpl(
         val maxRetriesByDeadline = (deadline - now()) / requestAverageProcessingTime.toMillis()
 
         return AtomicLong(min(maxRetriesByAmount, maxRetriesByDeadline))
-    }
-
-    private fun getTimeout(): Long {
-        var timeout = externalSystemAnalyzer.getQuantile(SUCCESS_QUANTILE)?.processingDuration
-            ?: requestAverageProcessingTime.toMillis()
-        timeout = min(timeout, 2 * requestAverageProcessingTime.toMillis())
-        timeout = max(timeout, requestAverageProcessingTime.toMillis() / 2)
-
-        return timeout
     }
 }
 
