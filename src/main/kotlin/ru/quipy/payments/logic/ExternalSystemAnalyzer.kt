@@ -23,7 +23,7 @@ class ExternalSystemAnalyzer {
             return null
         }
 
-        val sortedFinishedRequests = finishedRequests.sortedBy { it?.processingTime }.filterNotNull()
+        val sortedFinishedRequests = finishedRequests.sortedBy { it?.processingDuration }.filterNotNull()
         val q = ceil(quantile * sortedFinishedRequests.size)
 
         if (q >= sortedFinishedRequests.size) {

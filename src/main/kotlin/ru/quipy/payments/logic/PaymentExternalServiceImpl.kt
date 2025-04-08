@@ -18,7 +18,9 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.max
 import kotlin.math.min
+import kotlin.random.Random
 
 
 // Advice: always treat time as a Duration
@@ -27,7 +29,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 ) : PaymentExternalSystemAdapter {
     private val scheduledExecutorScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
-    private val inFlightRequestsScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+    private val urlBuilder = StringBuilder(256)
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -42,14 +44,17 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val requestsQueue = PriorityBlockingQueue<PendingRequest>(parallelRequests)
-    private val outgoingRateLimiter = CompositeRateLimiter(SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L)), LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L), rateLimitPerSec))
+    private val outgoingRateLimiter = CompositeRateLimiter(
+        SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L)),
+        LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L), selectMaxRps().toInt())
+    )
     private val inFlightRequestsLimiter = Semaphore(parallelRequests)
 
     private val externalSystemAnalyzer = ExternalSystemAnalyzer()
 
     private val coreExecutor = ThreadPoolExecutor(
-        parallelRequests,
-        parallelRequests,
+        64,
+        64,
         0L,
         TimeUnit.MILLISECONDS,
         PriorityBlockingQueue(),
@@ -61,52 +66,59 @@ class PaymentExternalSystemAdapterImpl(
         val transactionId = UUID.randomUUID()
 
         val pendingRequest =
-            PendingRequest(transactionId, paymentId, amount, paymentStartedAt, getMaxRetries(amount, deadline), deadline, accountName)
+            PendingRequest(
+                transactionId,
+                paymentId,
+                amount,
+                paymentStartedAt,
+                getMaxRetries(amount, deadline),
+                deadline,
+                accountName
+            )
         requestsQueue.add(pendingRequest)
     }
 
     override fun submitPayments() {
-        val paymentRequest = requestsQueue.poll()
+        val requests = (1..100).mapNotNull { requestsQueue.poll() }
 
-        if (paymentRequest === null) {
-            return
+        requests.forEach { paymentRequest ->
+            val url = buildUrl(paymentRequest)
+            coreExecutor.execute(createOptimizedRequest(paymentRequest, url))
         }
-
-        val timeout = getTimeout()
-        val url = "http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=${paymentRequest.transactionId}&paymentId=${paymentRequest.paymentId}&amount=${paymentRequest.amount}&timeout=PT${"%.3f".format(timeout.toDouble() / 1000.00)}s"
-
-        val futureTask = CompletableFuture<Unit>()
-        val request = object : InFlightRequest(paymentRequest, paymentESService, url, timeout, ::handleException) {
-            private fun coreFunc() {
-                runBlocking {
-                    withContext(Dispatchers.Default) {
-                        withContext(inFlightRequestsScope.coroutineContext) {
-                            outgoingRateLimiter.tickBlocking()
-                            inFlightRequestsLimiter.acquireUninterruptibly()
-                        }
-                    }
-
-                    try {
-                        super.run()
-                    } finally {
-                        inFlightRequestsLimiter.release()
-                    }
-                }
-            }
-
-            override fun run() {
-                try {
-                    futureTask.complete(coreFunc())
-                } catch (ex: Exception) {
-                    futureTask.completeExceptionally(ex)
-                } finally {
-                    externalSystemAnalyzer.addFinished(FinishedRequest(super.submissionTime, super.completionTime))
-                }
-            }
-        }
-
-        coreExecutor.execute(request)
     }
+
+    private fun buildUrl(request: PendingRequest): String {
+        urlBuilder.clear()
+        return urlBuilder.apply {
+            append("http://localhost:1234/external/process?")
+            append("serviceName=$serviceName&")
+            append("accountName=$accountName&")
+            append("transactionId=${request.transactionId}&")
+            append("paymentId=${request.paymentId}&")
+            append("amount=${request.amount}&")
+            append("timeout=PT${"%.3f".format(requestAverageProcessingTime.toMillis()/1000.00)}s")
+        }.toString()
+    }
+
+    private fun createOptimizedRequest(paymentRequest: PendingRequest, url: String) =
+        object : InFlightRequest(paymentRequest, paymentESService, url,
+            requestAverageProcessingTime.toMillis(), ::handleException) {
+
+            override fun run() = runBlocking {
+                try {
+                    outgoingRateLimiter.tickBlocking()
+                    inFlightRequestsLimiter.acquireUninterruptibly()
+                    super.run()
+                    withContext(Dispatchers.IO) {
+                        externalSystemAnalyzer.addFinished(FinishedRequest(processingDuration))
+                    }
+                } catch (e: Throwable) {
+                    handleException(paymentRequest, e)
+                } finally {
+                    inFlightRequestsLimiter.release()
+                }
+            }
+        }
 
     override fun price() = properties.price
 
@@ -115,19 +127,18 @@ class PaymentExternalSystemAdapterImpl(
     override fun name() = properties.accountName
 
     override fun canAcceptPayment(deadline: Long): Boolean {
-        if (deadline.toDouble() < now().toDouble() + (requestsQueue.size + 1).toDouble() / selectMaxRps() * 1000 + getTimeout()) {
+        if (deadline.toDouble() < now().toDouble() + (requestsQueue.size + 1).toDouble() / selectMaxRps() * 1000 + requestAverageProcessingTime.toMillis()) {
             throw IllegalStateException("Time limits for $accountName breached")
         }
 
         return true
     }
 
-    private fun handleException(paymentRequest: PendingRequest, e: Exception) {
+    private fun handleException(paymentRequest: PendingRequest, e: Throwable) {
         when (e) {
             is SocketTimeoutException -> {
                 logger.error(
-                    "[$accountName] Payment timeout for txId: ${paymentRequest.transactionId}, payment: ${paymentRequest.paymentId}",
-                    e
+                    "[$accountName] Payment timeout for txId: ${paymentRequest.transactionId}, payment: ${paymentRequest.paymentId}"
                 )
                 paymentESService.update(paymentRequest.paymentId) {
                     it.logProcessing(false, now(), paymentRequest.transactionId, reason = "Request timeout.")
@@ -163,7 +174,7 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     private fun cleanup() {
-        while (requestsQueue.peek() !== null && requestsQueue.peek().deadline < now()) {
+        while (requestsQueue.peek() !== null && requestsQueue.peek().deadline + requestAverageProcessingTime.toMillis() < now()) {
             val paymentRequest = requestsQueue.poll()
 
             paymentESService.update(paymentRequest.paymentId) {
@@ -172,11 +183,19 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    private val releaseJob = scheduledExecutorScope.launch {
+    private val maintenanceJob = scheduledExecutorScope.launch {
         while (true) {
-            submitPayments()
-            cleanup()
-            Thread.sleep(10L)
+            val startTime = System.currentTimeMillis()
+
+            // Чередуем выполнение задач
+            if (Random.nextBoolean()) {
+                submitPayments()
+            } else {
+                cleanup()
+            }
+
+            val processingTime = System.currentTimeMillis() - startTime
+            delay(maxOf(10L, 50L - processingTime))
         }
     }
 
@@ -195,8 +214,10 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     private fun getTimeout(): Long {
-        var timeout = externalSystemAnalyzer.getQuantile(SUCCESS_QUANTILE)?.processingTime ?: requestAverageProcessingTime.toMillis()
+        var timeout = externalSystemAnalyzer.getQuantile(SUCCESS_QUANTILE)?.processingDuration
+            ?: requestAverageProcessingTime.toMillis()
         timeout = min(timeout, 2 * requestAverageProcessingTime.toMillis())
+        timeout = max(timeout, requestAverageProcessingTime.toMillis() / 2)
 
         return timeout
     }

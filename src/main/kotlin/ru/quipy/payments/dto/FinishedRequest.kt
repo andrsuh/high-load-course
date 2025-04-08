@@ -1,8 +1,6 @@
 package ru.quipy.payments.dto
 
 class FinishedRequest(
-    paymentStartedAt: Long,
-    paymentFinishedAt: Long,
+    val processingDuration: Long,
 ) {
-    val processingTime = paymentFinishedAt - paymentStartedAt
 }

@@ -26,7 +26,7 @@ class PaymentAccountsConfig {
     @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
 
-    private val allowedAccounts = setOf("acc-16")
+    private val allowedAccounts = setOf("acc-12")
 
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
