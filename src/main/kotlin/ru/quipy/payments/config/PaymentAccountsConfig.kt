@@ -32,9 +32,10 @@ class PaymentAccountsConfig {
 
     //private val allowedAccounts = setOf("acc-3") //case-1
     //private val allowedAccounts = setOf("acc-5") //case-2 case-3
-    // private val allowedAccounts = setOf("acc-8") //case-4
-    private val allowedAccounts = setOf("acc-7") //case-5
-    //private val allowedAccounts = setOf("acc-16")//case-5.2
+    //private val allowedAccounts = setOf("acc-8") //case-4
+    //private val allowedAccounts = setOf("acc-7") //case-5
+    //private val allowedAccounts = setOf("acc-16") //case-5.2
+    private val allowedAccounts = setOf("acc-9") //case-6
 
 
     @Bean

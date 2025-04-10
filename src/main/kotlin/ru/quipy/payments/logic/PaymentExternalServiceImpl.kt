@@ -46,7 +46,7 @@ class PaymentExternalSystemAdapterImpl(
         .build()
     //case 1-2
         private val rpsLimiter = FixedWindowRateLimiter(rateLimitPerSec, 1, TimeUnit.SECONDS)
-     private val parallelRequestSemaphore = Semaphore(parallelRequests)
+//     private val parallelRequestSemaphore = Semaphore(parallelRequests)
      //case 3
 //    private val rpsLimiter = LeakingBucketRateLimiter(
 //        rateLimitPerSec,
@@ -85,8 +85,8 @@ class PaymentExternalSystemAdapterImpl(
 
              // (blocking) case-2, 5req on semaphore / 5 procTime = 1rps
 
-        parallelRequestSemaphore.acquire()
-        logger.info("Acquire. Semaphore queue length: ${parallelRequestSemaphore.queueLength}")
+//        parallelRequestSemaphore.acquire()
+//        logger.info("Acquire. Semaphore queue length: ${parallelRequestSemaphore.queueLength}")
         rpsLimiter.tickBlocking()
 
         // case-3 практика показывает, что parallel совсем чуть-чуть ломается, если оставить только лимитер, без paralSemaphore
@@ -121,8 +121,8 @@ class PaymentExternalSystemAdapterImpl(
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
 
-                parallelRequestSemaphore.release()
-                logger.info("Release. Semaphore queue length: ${parallelRequestSemaphore.queueLength}")
+//                parallelRequestSemaphore.release()
+//                logger.info("Release. Semaphore queue length: ${parallelRequestSemaphore.queueLength}")
                 if (!body.result) {
                     performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
                 }
@@ -145,8 +145,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
-            parallelRequestSemaphore.release()
-            logger.info("Release in catch. Semaphore queue length: ${parallelRequestSemaphore.queueLength}")
+//            parallelRequestSemaphore.release()
+//            logger.info("Release in catch. Semaphore queue length: ${parallelRequestSemaphore.queueLength}")
             performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
         }
     }
