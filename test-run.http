@@ -2,7 +2,7 @@ POST http://127.0.0.1:1234/test/run
 Content-Type: application/json
 
 {
-  "ratePerSecond": 5,
-  "testCount": 1000,
-  "processingTimeMillis": 6000
+  "ratePerSecond": 100,
+  "testCount": 5000,
+  "processingTimeMillis": 20000
 }
