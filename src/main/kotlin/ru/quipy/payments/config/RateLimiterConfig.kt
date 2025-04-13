@@ -4,7 +4,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.common.utils.LeakingBucketRateLimiter
-import ru.quipy.common.utils.OngoingWindow
+import ru.quipy.common.utils.NonBlockingOngoingWindow
 import ru.quipy.common.utils.RateLimiter
 import ru.quipy.payments.properties.RateLimiterProperties
 import java.time.Duration
@@ -21,6 +21,6 @@ class RateLimiterConfig {
     )
 
     @Bean
-    fun ongoingWindow(rateLimiterProperties: RateLimiterProperties): OngoingWindow
-        = OngoingWindow(rateLimiterProperties.maxWinSize)
+    fun ongoingWindow(rateLimiterProperties: RateLimiterProperties): NonBlockingOngoingWindow
+        = NonBlockingOngoingWindow(rateLimiterProperties.maxWinSize)
 }
