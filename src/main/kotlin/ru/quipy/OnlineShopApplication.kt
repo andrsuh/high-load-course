@@ -7,7 +7,6 @@ import org.springframework.boot.runApplication
 import ru.quipy.common.utils.NamedThreadFactory
 import java.util.concurrent.Executors
 
-
 @SpringBootApplication
 class OnlineShopApplication {
     val log: Logger = LoggerFactory.getLogger(OnlineShopApplication::class.java)
