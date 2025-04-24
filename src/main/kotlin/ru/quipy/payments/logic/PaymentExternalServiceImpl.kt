@@ -16,7 +16,14 @@ import java.net.SocketTimeoutException
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.*
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.stream.Collectors
+import java.util.stream.IntStream
 
 
 // Advice: always treat time as a Duration
@@ -40,6 +47,8 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val executor = Executors.newCachedThreadPool()
+    private val scheduler = Executors.newScheduledThreadPool(1)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -55,81 +64,137 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        val endTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(deadline), TimeZone.getDefault().toZoneId())
-        var result: Response? = null
         var attemptCount = 0
 
-        while (result == null && attemptCount < retryProperties.count) {
+        while (attemptCount < retryProperties.count) {
             ++attemptCount
-            if (endTime.isBefore(LocalDateTime.now())) {
+            if (isDeadlined(deadline)) {
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                 }
                 return
             }
 
-            while (!rateLimiter.tick()) {
-            }
+            val processed = AtomicBoolean(false)
+            val mainFuture = CompletableFuture<Pair<Boolean, String>>()
+            val hedgedFuture = CompletableFuture<Pair<Boolean, String>>()
 
-            while (true) {
-                if (ongoingWindow.putIntoWindow() is NonBlockingOngoingWindow.WindowResponse.Success) {
-                    break
+            executor.submit {
+                try {
+                    val result = sendRequest(paymentId, transactionId, amount, deadline)
+                    mainFuture.complete(result)
+                } catch (e: Exception) {
+                    mainFuture.completeExceptionally(e)
                 }
             }
 
-            paymentESService.update(paymentId) {
-                val millis = now() - paymentStartedAt
-                it.logSubmission(true, transactionId, now(), Duration.ofMillis(millis))
-            }
+            scheduler.schedule({
+                if (!mainFuture.isDone) {
+                    executor.submit {
+                        try {
+                            val result = sendRequest(paymentId, transactionId, amount, deadline)
+                            hedgedFuture.complete(result)
+                        } catch (e: Exception) {
+                            hedgedFuture.completeExceptionally(e)
+                        }
+                    }
+                } else {
+                    hedgedFuture.cancel(false)
+                }
+            }, retryProperties.hedgedDelayLimitMs, TimeUnit.MILLISECONDS)
 
+            try {
+                val result = CompletableFuture.anyOf(mainFuture, hedgedFuture).get() as Pair<Boolean, String>
+                if (processed.compareAndSet(false, true)) {
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(result.first, now(), transactionId, reason = result.second)
+                    }
+                    if (result.first) {
+                        mainFuture.cancel(true)
+                        hedgedFuture.cancel(true)
+                        return
+                    }
+                }
+            } catch (e: Exception) {
+                logger.error("[$accountName] Error processing payment $paymentId: ${e.message}")
+            }
+            mainFuture.cancel(true)
+            hedgedFuture.cancel(true)
+        }
+    }
+
+    private fun sendRequest(
+        paymentId: UUID,
+        transactionId: UUID,
+        amount: Int,
+        deadline: Long
+    ): Pair<Boolean, String> {
+        if (isDeadlined(deadline)) {
+            val reason = "Request timeout."
+            logger.error("[$accountName] Deadline exceeded for payment $paymentId, txId: $transactionId")
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason)
+            }
+            return Pair(false, reason)
+        }
+
+        while (!rateLimiter.tick()) {
+            Thread.sleep(10)
+        }
+
+        while (true) {
+            if (ongoingWindow.putIntoWindow() is NonBlockingOngoingWindow.WindowResponse.Success) {
+                break
+            }
+        }
+
+        try {
             val request = Request.Builder().run {
                 url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
-            }.build()
-
-            try {
-                client.newCall(request).execute().use { response ->
-                    val body = try {
-                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-                    }
-
-                    if (!setOf(200, 400, 401, 403, 404, 405).contains(response.code) || !body.result) {
-                        var delay = Duration.ofMillis(100)
-                        response.headers["Retry-After"]?.let { delay = Duration.parse(it) }
-                        Thread.sleep(delay)
-                        return@use
-                    }
-
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(true, now(), transactionId, reason = body.message)
-                    }
-                    result = response
-                }
-            } catch (e: Exception) {
-                when (e) {
-                    is SocketTimeoutException -> {
-                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                        }
-                    }
-                    else -> {
-                        logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = e.message)
-                        }
-                    }
-                }
+                build()
             }
-
+            client.newCall(request).execute().use { response ->
+                val (success, message) = getResponse(response, transactionId, paymentId)
+                return Pair(success, message)
+            }
+        } catch (e: Exception) {
+            val message = when (e) {
+                is SocketTimeoutException -> "Request timeout."
+                else -> e.message ?: "Unknown error"
+            }
+            return Pair(false, message)
+        } finally {
             ongoingWindow.releaseWindow()
         }
     }
+
+    private fun getResponse(
+        response: Response,
+        transactionId: UUID,
+        paymentId: UUID
+    ): Pair<Boolean, String> {
+        val body = try {
+            mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+        } catch (e: Exception) {
+            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+        }
+
+        val success = IntStream.rangeClosed(200, 299)
+            .boxed()
+            .collect(Collectors.toSet())
+            .contains(response.code) && body.result
+
+        return Pair(
+            success,
+            body.message ?: if (success) "Success" else "Failed"
+        )
+    }
+
+    private fun isDeadlined(deadline: Long): Boolean = LocalDateTime.now().isAfter(
+        Instant.ofEpochMilli(deadline).atZone(ZoneId.systemDefault()).toLocalDateTime()
+    )
 
     override fun price() = properties.price
 

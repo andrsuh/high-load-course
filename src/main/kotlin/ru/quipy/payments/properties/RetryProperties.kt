@@ -7,4 +7,5 @@ import org.springframework.boot.context.properties.ConstructorBinding
 @ConfigurationProperties(prefix = "retry")
 data class RetryProperties(
     val count: Int,
+    val hedgedDelayLimitMs: Long,
 )
