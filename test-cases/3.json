@@ -1,0 +1,5 @@
+{
+  "ratePerSecond": 2,
+  "testCount": 500,
+  "processingTimeMillis": 60000
+}
