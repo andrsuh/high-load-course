@@ -9,7 +9,7 @@ import kotlin.math.pow
 
 class RetryInterceptor(
     private val rateLimiter: RateLimiter,
-    private val ongoingWindow: OngoingWindow,
+    private val ongoingWindow: NonBlockingOngoingWindow,
     private val maxRetries: Int,
     private val initialDelayMillis: Long,
     private val timeoutInMillis: Long,
@@ -33,9 +33,9 @@ class RetryInterceptor(
                     logger.info("Retry attempt $retryCount for request to ${request.url}")
                 }
 
-                ongoingWindow.acquire()
-                while (!rateLimiter.tick()) {
-                    Thread.sleep(10)
+                val windowResponse = ongoingWindow.putIntoWindow()
+                if (windowResponse.isSuccess()) {
+                    break
                 }
                 response = chain.proceed(request)
 

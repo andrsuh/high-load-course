@@ -47,5 +47,7 @@ class NonBlockingOngoingWindow(
         public class Fail(
             currentWinSize: Int
         ) : WindowResponse(currentWinSize)
+
+        fun isSuccess() = this is Success
     }
 }
