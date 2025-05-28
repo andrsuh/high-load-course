@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.RateLimiter
 import ru.quipy.common.utils.RetryInterceptor
@@ -13,16 +14,14 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
-
+import java.util.UUID
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
-    private val rateLimiter: RateLimiter,
-    private val ongoingWindow: OngoingWindow,
-    private val retryInterceptor: RetryInterceptor
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -37,6 +36,22 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+
+    private val rateLimiter: RateLimiter = LeakingBucketRateLimiter(
+        rate = rateLimitPerSec.toLong(),
+        window = Duration.ofSeconds(1),
+        bucketSize = (parallelRequests*0.8).roundToInt()
+    )
+    private val ongoingWindow: OngoingWindow = OngoingWindow(parallelRequests)
+    private val retryInterceptor: RetryInterceptor = RetryInterceptor(
+        rateLimiter = rateLimiter,
+        ongoingWindow = ongoingWindow,
+        maxRetries = 15,
+        initialDelayMillis = 250,
+        timeoutInMillis = 3500,
+        delayMultiplier = 2.5,
+        retryableClientErrorCodes = setOf(408, 425, 429,)
+    )
 
     private val client = OkHttpClient.Builder().addInterceptor(retryInterceptor).build()
 
@@ -59,10 +74,6 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
-            ongoingWindow.acquire()
-            while (!rateLimiter.tick()) {
-                Thread.sleep(10)
-            }
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
@@ -106,7 +117,6 @@ class PaymentExternalSystemAdapterImpl(
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
-
 }
 
 public fun now() = System.currentTimeMillis()

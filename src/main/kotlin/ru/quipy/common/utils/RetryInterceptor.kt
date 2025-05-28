@@ -1,47 +1,88 @@
 package ru.quipy.common.utils
 
 import okhttp3.Interceptor
+import okhttp3.Response
+import org.slf4j.LoggerFactory
 import java.io.IOException
-import java.time.Duration
+import java.util.Random
+import kotlin.math.pow
 
-class RetryInterceptor(private val maxRetries: Int = 1, private val retryableHttpCodes: List<Int>) : Interceptor {
-    private val initialDelay = Duration.ofSeconds(1)
+class RetryInterceptor(
+    private val rateLimiter: RateLimiter,
+    private val ongoingWindow: OngoingWindow,
+    private val maxRetries: Int,
+    private val initialDelayMillis: Long,
+    private val timeoutInMillis: Long,
+    private val delayMultiplier: Double,
+    private val retryableClientErrorCodes: Set<Int>,
+) : Interceptor {
 
-    @Throws(IOException::class)
-    override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
-        val request: okhttp3.Request = chain.request()
-        var response: okhttp3.Response?
-        var exception: IOException? = null
-        var attempt = 0
-        val delay = initialDelay
+    private val random = Random()
 
-        while (attempt < maxRetries) {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val timeoutAt = System.currentTimeMillis() + timeoutInMillis
+        val request = chain.request()
+
+        var retryCount = 0
+        var response: Response? = null
+
+        while (retryCount <= maxRetries && (timeoutAt - System.currentTimeMillis() > 0)) {
             try {
+
+                if (retryCount > 0) {
+                    logger.info("Retry attempt $retryCount for request to ${request.url}")
+                }
+
+                ongoingWindow.acquire()
+                while (!rateLimiter.tick()) {
+                    Thread.sleep(10)
+                }
                 response = chain.proceed(request)
 
-                if (response.isSuccessful || response.code !in retryableHttpCodes) {
+                if (response.isSuccessful || !isRetryable(response.code)) {
                     return response
+                } else {
+                    response.close()
+
+                    if (retryCount == maxRetries) {
+                        break
+                    }
+
+                    val delayTime = calculateDelayTime(retryCount)
+                    logger.info("Waiting for ${delayTime}ms before next retry for code ${response.code}")
+
+                    Thread.sleep(delayTime)
+                    retryCount++
                 }
             } catch (e: IOException) {
-                exception = e
-            } finally {
-                attempt++
-            }
-
-            if (attempt < maxRetries) {
-                try {
-                    Thread.sleep(delay)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
+                if (retryCount == maxRetries) {
+                    throw e
                 }
+
+                val delayTime = calculateDelayTime(retryCount)
+                logger.info("I/O error, waiting for ${delayTime}ms before next retry: ${e.message}")
+                Thread.sleep(delayTime)
+                retryCount++
             }
-            delay.multipliedBy(2)
         }
+        return response ?: throw IOException("Failed after $maxRetries retry attempts")
+    }
 
-        if (exception != null) {
-            throw exception
-        }
+    private fun isRetryable(statusCode: Int): Boolean {
+        return statusCode in retryableClientErrorCodes || (statusCode in 500..599) // все ошибки сервера ретраим
+    }
 
-        throw IOException("Maximum retry attempts ($maxRetries) exhausted")
+    private fun calculateDelayTime(retryCount: Int): Long {
+        val exponentialDelay = (initialDelayMillis * delayMultiplier.pow(retryCount.toDouble())).toLong()
+        // // добавим рандома для некст кейса))
+        // val jitterPercentage = 0.3
+        // val jitter = (exponentialDelay * jitterPercentage * (random.nextDouble() * 2 - 1)).toLong()
+
+        // return (exponentialDelay + jitter).coerceAtLeast(0)
+        return exponentialDelay
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(RetryInterceptor::class.java)
     }
 }

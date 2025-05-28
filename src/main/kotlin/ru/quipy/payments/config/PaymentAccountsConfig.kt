@@ -3,16 +3,9 @@ package ru.quipy.payments.config
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
 import org.springframework.beans.factory.annotation.Value
-import org.springframework.boot.web.embedded.jetty.JettyServerCustomizer
-import org.springframework.boot.web.embedded.jetty.JettyServletWebServerFactory
-import org.springframework.boot.web.embedded.tomcat.TomcatConnectorCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import ru.quipy.common.utils.OngoingWindow
-import ru.quipy.common.utils.RateLimiter
-import ru.quipy.common.utils.RetryInterceptor
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAccountProperties
@@ -35,14 +28,11 @@ class PaymentAccountsConfig {
     @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
 
-    private val allowedAccounts = setOf("acc-7")
+    private val allowedAccounts = setOf("acc-8")
 
     @Bean
     fun accountAdapters(
-        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
-        rateLimiter: RateLimiter,
-        ongoingWindow: OngoingWindow,
-        retryInterceptor: RetryInterceptor,
+        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
     ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=onlineStore")) // todo sukhoa service name
@@ -59,6 +49,6 @@ class PaymentAccountsConfig {
             .filter {
                 it.accountName in allowedAccounts
             }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it, paymentService, rateLimiter, ongoingWindow, retryInterceptor) }
+            .map { PaymentExternalSystemAdapterImpl(it, paymentService) }
     }
 }
