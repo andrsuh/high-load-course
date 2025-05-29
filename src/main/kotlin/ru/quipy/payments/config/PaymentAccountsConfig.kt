@@ -28,7 +28,7 @@ class PaymentAccountsConfig {
     }
     @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
-    private val allowedAccounts = setOf("acc-7")
+    private val allowedAccounts = setOf("acc-9")
 
     @Bean
     fun accountAdapters(
@@ -51,6 +51,6 @@ class PaymentAccountsConfig {
             .filter {
                 it.accountName in allowedAccounts
             }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it, paymentService, rateLimiter, ongoingWindow) }
+            .map { PaymentExternalSystemAdapterImpl(it, paymentService) }
     }
 }
