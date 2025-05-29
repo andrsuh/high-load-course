@@ -21,6 +21,8 @@ class TransientHttpException(val code: Int, message: String?) : Exception(messag
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val rateLimiter: RateLimiter,
+    private val ongoingWindow: OngoingWindow,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -144,6 +146,8 @@ class PaymentExternalSystemAdapterImpl(
             } finally {
                 ongoingWindow.releaseWindow()
             }
+        } finally {
+            ongoingWindow.release()
         }
     }
 
