@@ -5,12 +5,11 @@ import okhttp3.Response
 import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.net.SocketTimeoutException
-import java.util.Random
 import kotlin.math.pow
 
 class RetryInterceptor(
     private val rateLimiter: RateLimiter,
-    private val ongoingWindow: NonBlockingOngoingWindow,
+    private val ongoingWindow: NonBlockingDeadlineWindow,
     private val maxRetries: Int,
     private val initialDelayMillis: Long,
     private val timeoutInMillis: Long,
@@ -18,12 +17,10 @@ class RetryInterceptor(
     private val retryableClientErrorCodes: Set<Int>,
 ) : Interceptor {
 
-    private val random = Random()
-
     override fun intercept(chain: Interceptor.Chain): Response {
         val timeoutAt = System.currentTimeMillis() + timeoutInMillis
         val request = chain.request()
-
+        val deadline = request.header("X-Deadline-Long")?.toLong() ?: 0
         var retryCount = 0
         var response: Response? = null
         while (retryCount <= maxRetries && (timeoutAt - System.currentTimeMillis() > 0)) {
@@ -38,7 +35,7 @@ class RetryInterceptor(
                 }
 
                 while (true) {
-                    val windowResponse = ongoingWindow.putIntoWindow()
+                    val windowResponse = ongoingWindow.putIntoWindow(deadline)
                     if (windowResponse.isSuccess()) {
                         break
                     }
@@ -74,8 +71,7 @@ class RetryInterceptor(
                 logger.info("I/O error, waiting for ${delayTime}ms before next retry: ${e.message}")
                 Thread.sleep(delayTime)
                 retryCount++
-            }
-            finally {
+            } finally {
                 ongoingWindow.releaseWindow()
             }
         }
