@@ -35,20 +35,7 @@ class PaymentSubscriber {
         ) {
             `when`(PaymentProcessedEvent::class) { event ->
                 appExecutor.submit {
-//                    orderRepository.findById(event.orderId)?.let {
-//                        orderRepository.save(
-//                            it.copy(
-//                                paymentHistory = (it.paymentHistory + PaymentTransactionsSubscriber.PaymentLogRecord(
-//                                    event.processedAt,
-//                                    if (event.success) PaymentTransactionsSubscriber.PaymentStatus.SUCCESS else PaymentTransactionsSubscriber.PaymentStatus.FAILED,
-//                                    event.amount,
-//                                    event.paymentId
-//                                ))
-//                            )
-//                        )
-//                    } ?: IllegalStateException("Order with id ${event.orderId} not found")
-
-                    logger.info(
+                    logger.trace(
                         "Payment results. OrderId ${event.orderId}, succeeded: ${event.success}, txId: ${event.transactionId}, reason: ${event.reason}, duration: ${
                             Duration.ofMillis(
                                 event.createdAt - event.submittedAt

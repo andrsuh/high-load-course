@@ -1,7 +1,10 @@
-POST http://127.0.0.1:1234/test/run
+// IP-address should represent the host where the Test-sys is located. 127.0.0.1 in case of local tests, 213.170.70.30 for remote tests
+POST http://213.170.70.30:1234/test/run
 Content-Type: application/json
 
 {
+  "serviceName": "onlineStore-1",
+  "token": "copaty2FnjdG9rZW4=",
   "ratePerSecond": 2,
   "testCount": 10,
   "processingTimeMillis": 1000
