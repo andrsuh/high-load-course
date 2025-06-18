@@ -49,7 +49,7 @@ class PaymentExternalSystemAdapterImpl(
 //            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
 //        }
 
-        logger.info("[$accountName] Submit for $paymentId , txId: $transactionId")
+        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
         val request = Request.Builder().run {
             url("http://$paymentProviderHostPort/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
             post(emptyBody)
