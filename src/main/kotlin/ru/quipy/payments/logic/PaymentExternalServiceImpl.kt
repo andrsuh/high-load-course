@@ -27,6 +27,9 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
     }
 
+    @Value("\${payment.token}")
+    lateinit var token: String
+
     @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
 
@@ -45,13 +48,13 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-//        paymentESService.update(paymentId) {
-//            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-//        }
+        paymentESService.update(paymentId) {
+            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
         val request = Request.Builder().run {
-            url("http://$paymentProviderHostPort/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+            url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
             post(emptyBody)
         }.build()
 
