@@ -6,7 +6,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -17,7 +16,9 @@ import java.util.*
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
-    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val paymentProviderHostPort: String,
+    private val token: String,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -26,12 +27,6 @@ class PaymentExternalSystemAdapterImpl(
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
     }
-
-    @Value("\${payment.token}")
-    lateinit var token: String
-
-    @Value("\${payment.hostPort}")
-    lateinit var paymentProviderHostPort: String
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
