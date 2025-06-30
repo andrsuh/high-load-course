@@ -48,9 +48,16 @@ class PaymentAccountsConfig {
             resp.body(),
             mapper.typeFactory.constructCollectionType(List::class.java, PaymentAccountProperties::class.java)
         )
-            .filter {
-                it.accountName in allowedAccounts
-            }.onEach(::println)
-            .map { PaymentExternalSystemAdapterImpl(it, paymentService) }
+            .filter { it.accountName in allowedAccounts }
+            .map { it.copy(enabled = true) }
+            .onEach(::println)
+            .map {
+                PaymentExternalSystemAdapterImpl(
+                    it,
+                    paymentService,
+                    paymentProviderHostPort,
+                    token
+                )
+            }
     }
 }
