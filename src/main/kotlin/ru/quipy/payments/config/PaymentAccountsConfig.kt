@@ -32,7 +32,7 @@ class PaymentAccountsConfig {
     @Value("\${payment.token}")
     lateinit var token: String
 
-    private val allowedAccounts = setOf("acc-12")
+    private val allowedAccounts = setOf("test-account")
 
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {

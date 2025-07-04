@@ -12,14 +12,5 @@ services:
       - ${POSTGRES_CONTAINER_EXPOSED_PORT}:${POSTGRES_CONTAINER_INTERNAL_PORT}
     command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_connections=200
     restart: unless-stopped
-#  mongo:
-#    build:
-##      context: mongoDb
-#      dockerfile: mongoDb/Dockerfile
-#    restart: always
-#    ports:
-#      - 27017:27017
-#    volumes:
-#      - mongo_data:/data/db
 volumes:
   mongo_data: { }
