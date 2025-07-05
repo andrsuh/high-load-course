@@ -1,9 +1,11 @@
-POST http://213.170.70.30:1234/run
+# @timeout 120
+POST http://213.170.70.30:4321/run
 Content-Type: application/json
 
 {
-  "serviceName": "onlineStore-1",
-  "token": "copaty2FnjdG9rZW4=",
+  "serviceName": {{serviceName}},
+  "token": {{token}},
+  "branch": "main",
   "ratePerSecond": 2,
   "testCount": 10,
   "processingTimeMillis": 1000,
