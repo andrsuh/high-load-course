@@ -32,7 +32,8 @@ class PaymentAccountsConfig {
     @Value("\${payment.token}")
     lateinit var token: String
 
-    private val allowedAccounts = setOf("test-account")
+    @Value("#{'\${payment.accounts}'.split(',')}")
+    lateinit var allowedAccounts: List<String>
 
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
