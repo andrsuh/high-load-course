@@ -1,22 +1,14 @@
-# Template for the HighLoad course
+# HighLoad course
 This project is based on [Tiny Event Sourcing library](https://github.com/andrsuh/tiny-event-sourcing)
 
-### Run PostgreSql
-This example uses Postgres as an implementation of the Event store. You can see it in `pom.xml`:
+## About
+Check [notion](https://andrsuh.notion.site/4ce8c377151c4608af18036ef6fde937) with a detailed description of the course.
 
-```
-<dependency>
-    <groupId>ru.quipy</groupId>
-    <artifactId>tiny-postgres-event-store-spring-boot-starter</artifactId>
-    <version>${tiny.es.version}</version>
-</dependency>
-```
+## Repositories
 
-Thus, you have to run Postgres in order to test this example. We have `docker-compose` file in the root. Run following command to start the database:
+* https://github.com/andrsuh/high-load-course - Online store code base that needs to be modified
+* https://github.com/andrsuh/bombardier - Services that emulate customers of an online store and payment provider
 
-```
-docker-compose up
-```
 
-### Run the application
-To make the application run you can start the main class `OnlineShopApplication`.
+## Setup
+Check `SETUP.md` file with instructions for running `high-load-course` and `bombardier`.
