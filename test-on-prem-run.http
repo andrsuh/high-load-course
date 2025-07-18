@@ -3,11 +3,10 @@ POST http://213.170.70.30:4321/run
 Content-Type: application/json
 
 {
-  "serviceName": {{serviceName}},
-  "token": {{token}},
-  "branch": "main",
-  "ratePerSecond": 2,
-  "testCount": 10,
-  "processingTimeMillis": 1000,
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "branch": "case-1",
+  "ratePerSecond": 11,
+  "testCount": 1200,
   "onPremises": true
 }
