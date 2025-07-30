@@ -20,3 +20,27 @@ docker-compose up
 
 ### Run the application
 To make the application run you can start the main class `OnlineShopApplication`.
+
+
+### Если вы хотите подтянуть изменения главного репозитория в свой форк
+
+Команда ```git remote -v``` должна содержать следующие строки:
+
+```
+upstream        https://github.com/andrsuh/high-load-course.git (fetch)
+upstream        https://github.com/andrsuh/high-load-course.git (push)
+```
+
+Если нет, то добавьте upstream:
+
+```git remote add upstream https://github.com/andrsuh/high-load-course.git```
+
+Чтобы подтянуть изменения из главного репозитория, выполните следующие команды:
+
+```
+git fetch upstream
+// переключаемся на главную ветку вашего форка. Убедитесь что ветка не содержит изменений, чтобы не решать конфликты
+git checkout main 
+// сливаем изменения из главного репозитория в вашу главную ветку
+git merge upstream/main 
+```
