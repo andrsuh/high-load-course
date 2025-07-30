@@ -1,5 +1,6 @@
 package ru.quipy.config
 
+import jakarta.annotation.PostConstruct
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -12,7 +13,6 @@ import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.streams.AggregateEventStreamManager
 import java.util.*
-import javax.annotation.PostConstruct
 
 
 /**
@@ -65,7 +65,6 @@ class EventSourcingLibConfiguration {
             }
         }
     }
-
 
     @Bean // hack Jetty to tweak the number of possible https2 streams
     fun jettyServerCustomizer(): JettyServletWebServerFactory {

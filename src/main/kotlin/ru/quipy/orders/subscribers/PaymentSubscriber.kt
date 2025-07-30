@@ -1,5 +1,6 @@
 package ru.quipy.orders.subscribers
 
+import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -12,7 +13,6 @@ import ru.quipy.streams.AggregateSubscriptionsManager
 import ru.quipy.streams.annotation.RetryConf
 import ru.quipy.streams.annotation.RetryFailedStrategy
 import java.time.Duration
-import javax.annotation.PostConstruct
 
 @Service
 class PaymentSubscriber {
