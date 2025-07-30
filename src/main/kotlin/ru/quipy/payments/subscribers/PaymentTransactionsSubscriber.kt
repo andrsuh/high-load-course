@@ -12,7 +12,7 @@ import ru.quipy.streams.annotation.RetryFailedStrategy
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
-import javax.annotation.PostConstruct
+import jakarta.annotation.PostConstruct
 
 @Service
 class PaymentTransactionsSubscriber {
