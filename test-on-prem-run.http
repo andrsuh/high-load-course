@@ -5,9 +5,8 @@ Content-Type: application/json
 {
   "serviceName": "{{serviceName}}",
   "token": "{{token}}",
-  "branch": "main",
-  "ratePerSecond": 2,
-  "testCount": 10,
-  "processingTimeMillis": 1000,
+  "branch": "case-1",
+  "ratePerSecond": 11,
+  "testCount": 1200,
   "onPremises": true
 }
