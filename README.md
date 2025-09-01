@@ -12,14 +12,21 @@ This example uses Postgres as an implementation of the Event store. You can see 
 </dependency>
 ```
 
-Thus, you have to run Postgres in order to test this example. We have `docker-compose` file in the root. Run following command to start the database:
+Thus, you have to run Postgres in order to test this example. Postgres service is included in each `docker-compose` file that we have in the root of the project.
 
+### Run the infrastructure
+Set of the services you need to start developing and testing process is following:
+- Bombardier - service that is in charge of emulation the store's clients activity (creates the incoming load). Also serves as a third-party payment system.
+- Postgres DBMS
+- Prometheus + Grafana - metrics collection and visualization services
+
+You can run all beforementioned services by the following command:
 ```
-docker-compose up
+docker-compose -f docker-conpose-local.yml up
 ```
 
 ### Run the application
-To make the application run you can start the main class `OnlineShopApplication`.
+To make the application run you can start the main class `OnlineShopApplication`. It is not being launched as a docker contained to simplify and speed up the devevopment process as it is easier for you to refactor the application and re-run it immediately in the IDE.
 
 
 ### Если вы хотите подтянуть изменения главного репозитория в свой форк

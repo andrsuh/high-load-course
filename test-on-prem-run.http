@@ -1,5 +1,6 @@
+### Run test remotely
 # @timeout 120
-POST http://213.170.70.30:4321/run
+POST http://77.234.215.138:34321/run
 Content-Type: application/json
 
 {
@@ -12,3 +13,7 @@ Content-Type: application/json
   "processingTimeMillis": 1000,
   "onPremises": true
 }
+
+### Stop running test to save credits
+# @timeout 120
+POST http://213.170.70.30:4321/test/stop/"{{serviceName}}"

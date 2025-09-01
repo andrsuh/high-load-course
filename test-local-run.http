@@ -1,4 +1,4 @@
-// IP-address should represent the host where the Test-sys is located. 127.0.0.1 in case of local tests, 213.170.70.30 for remote tests
+### Run test locally
 POST http://localhost:1234/test/run
 Content-Type: application/json
 
@@ -9,3 +9,7 @@ Content-Type: application/json
   "testCount": 100,
   "processingTimeMillis": 30000
 }
+
+### Stop running test to save time and resources
+# @timeout 120
+POST http://localhost:4321/test/stop/"{{serviceName}}"
