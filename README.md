@@ -22,7 +22,7 @@ Set of the services you need to start developing and testing process is followin
 
 You can run all beforementioned services by the following command:
 ```
-docker-compose -f docker-conpose-local.yml up
+docker compose -f docker-compose-local.yml up
 ```
 
 ### Run the application
