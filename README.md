@@ -12,7 +12,13 @@ This example uses Postgres as an implementation of the Event store. You can see 
 </dependency>
 ```
 
-Thus, you have to run Postgres in order to test this example. Postgres service is included in each `docker-compose` file that we have in the root of the project.
+Thus, you have to run Postgres in order to test this example. Postgres service is included in  `docker-compose` file that we have in the root of the project.
+
+# More comprehensive information about the course, project, how to run tests is here:
+
+https://andrsuh.notion.site/2595d535059281d8a815c2cb3875c376?source=copy_link
+
+https://andrsuh.notion.site/2625d5350592801aaf88c7c95302d10c?source=copy_link
 
 ### Run the infrastructure
 Set of the services you need to start developing and testing process is following:
@@ -29,25 +35,24 @@ docker compose -f docker-compose.yml up
 To make the application run you can start the main class `OnlineShopApplication`. It is not being launched as a docker contained to simplify and speed up the devevopment process as it is easier for you to refactor the application and re-run it immediately in the IDE.
 
 
-### Если вы хотите подтянуть изменения главного репозитория в свой форк
+### If you want to pull changes from the main repository into your fork
 
-Команда ```git remote -v``` должна содержать следующие строки:
+The command ```git remote -v``` should include the following lines:
 
 ```
 upstream        https://github.com/andrsuh/high-load-course.git (fetch)
 upstream        https://github.com/andrsuh/high-load-course.git (push)
 ```
 
-Если нет, то добавьте upstream:
-
+If not, add the upstream remote:
 ```git remote add upstream https://github.com/andrsuh/high-load-course.git```
 
-Чтобы подтянуть изменения из главного репозитория, выполните следующие команды:
+To pull changes from the main repository, run the following commands:
 
 ```
 git fetch upstream
-// переключаемся на главную ветку вашего форка. Убедитесь что ветка не содержит изменений, чтобы не решать конфликты
+# switch to the main branch of your fork. Make sure the branch has no uncommitted changes to avoid conflicts
 git checkout main 
-// сливаем изменения из главного репозитория в вашу главную ветку
+# merge changes from the main repository into your main branch
 git merge upstream/main 
 ```
