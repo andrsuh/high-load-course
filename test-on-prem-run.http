@@ -10,7 +10,7 @@ Content-Type: application/json
   "accounts": "acc-12,acc-20",
   "ratePerSecond": 2,
   "testCount": 10,
-  "processingTimeMillis": 1000,
+  "processingTimeMillis": 80000,
   "onPremises": true
 }
 
