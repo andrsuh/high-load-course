@@ -33,3 +33,11 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Secrets ###
+.env
+http-client.env.json
+
+### Utils ###
+grafana/data
+prometheus/data
