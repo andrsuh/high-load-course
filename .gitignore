@@ -18,11 +18,9 @@ target/
 *.iws
 *.iml
 *.ipr
-./http-client.env.json
 
 ### NetBeans ###
 /nbproject/private/
-
 /nbbuild/
 /dist/
 /nbdist/
@@ -33,3 +31,8 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Course specific ###
+http-client.env.json
+grafana/data/
+prometheus/data/
