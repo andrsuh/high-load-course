@@ -18,7 +18,7 @@ target/
 *.iws
 *.iml
 *.ipr
-./http-client.env.json
+/http-client.env.json
 
 ### NetBeans ###
 /nbproject/private/
@@ -28,6 +28,8 @@ target/
 /nbdist/
 /.nb-gradle/
 build/
+grafana/data
+prometheus/data
 !**/src/main/**/build/
 !**/src/test/**/build/
 
