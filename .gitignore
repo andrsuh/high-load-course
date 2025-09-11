@@ -33,3 +33,12 @@ build/
 
 ### VS Code ###
 .vscode/
+
+
+###############
+.env
+
+# Данные Prometheus
+prometheus/data/
+
+*.log
