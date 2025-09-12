@@ -16,6 +16,7 @@
     <description>Application for resilience and highly-loaded applications course</description>
 
 	<properties>
+<!--        <java.version>17</java.version>-->
         <kotlin.version>2.2.0</kotlin.version>
         <kotlinx-coroutines-core.version>1.9.0</kotlinx-coroutines-core.version>
         <okhttp.version>4.12.0</okhttp.version>
@@ -213,8 +214,8 @@
                     </execution>
                 </executions>
                 <configuration>
-                    <source>11</source>
-                    <target>11</target>
+                    <source>17</source>
+                    <target>17</target>
                 </configuration>
             </plugin>
         </plugins>
