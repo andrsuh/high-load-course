@@ -8,8 +8,8 @@ Content-Type: application/json
   "token": "{{token}}",
   "branch": "main",
   "accounts": "acc-12,acc-20",
-  "ratePerSecond": 2,
-  "testCount": 10,
+  "ratePerSecond": 11,
+  "testCount": 1200,
   "processingTimeMillis": 80000,
   "onPremises": true
 }
