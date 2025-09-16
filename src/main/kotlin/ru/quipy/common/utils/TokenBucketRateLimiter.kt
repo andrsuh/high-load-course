@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -49,5 +50,20 @@ class TokenBucketRateLimiter(
                 return true
             }
         }
+    }
+
+    override fun tickBlocking() {
+        while (!tick()) {
+            Thread.sleep(5)
+        }
+    }
+
+    override fun tickBlocking(timeout: Duration): Boolean {
+        val end = System.currentTimeMillis() + timeout.toMillis()
+        while (System.currentTimeMillis() <= end) {
+            if (tick()) return true
+            Thread.sleep(5)
+        }
+        return false
     }
 }

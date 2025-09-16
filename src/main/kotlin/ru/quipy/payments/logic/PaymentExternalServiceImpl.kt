@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
@@ -35,8 +36,20 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val client = OkHttpClient.Builder().build()
+    // Используем скользящее окно для более точного ограничения скорости
+    private val outboundLimiter = SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        val now = System.currentTimeMillis()
+        val timeoutMillis = maxOf(0, deadline - now)
+        if (!outboundLimiter.tickBlocking(Duration.ofMillis(timeoutMillis))) {
+            // Если не удалось получить данные в лимит - log и record
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), UUID.randomUUID(), reason = "rate-limited before submit")
+            }
+            logger.warn("[$accountName] Rate limited payment $paymentId before outbound call")
+            return
+        }
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
