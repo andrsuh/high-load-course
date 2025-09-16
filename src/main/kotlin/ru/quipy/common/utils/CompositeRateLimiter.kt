@@ -11,7 +11,6 @@ class CompositeRateLimiter(
     }
 
     override fun tickBlocking() {
-        // Block until both can proceed
         rl1.tickBlocking()
         rl2.tickBlocking()
     }
