@@ -8,7 +8,10 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.payments.logic.*
+import ru.quipy.payments.logic.PaymentAccountProperties
+import ru.quipy.payments.logic.PaymentAggregateState
+import ru.quipy.payments.logic.PaymentExternalSystemAdapter
+import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -36,7 +39,7 @@ class PaymentAccountsConfig {
     lateinit var allowedAccounts: List<String>
 
     @Bean
-    fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
+    fun accountProperties(): List<PaymentAccountProperties> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=$serviceName&token=$token"))
             .GET()
@@ -52,13 +55,20 @@ class PaymentAccountsConfig {
             .filter { it.accountName in allowedAccounts }
             .map { it.copy(enabled = true) }
             .onEach(::println)
-            .map {
-                PaymentExternalSystemAdapterImpl(
-                    it,
-                    paymentService,
-                    paymentProviderHostPort,
-                    token
-                )
-            }
+    }
+
+    @Bean
+    fun accountAdapters(
+        properties: List<PaymentAccountProperties>,
+        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    ): List<PaymentExternalSystemAdapter> {
+        return properties.map {
+            PaymentExternalSystemAdapterImpl(
+                it,
+                paymentService,
+                paymentProviderHostPort,
+                token
+            )
+        }
     }
 }

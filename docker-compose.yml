@@ -59,6 +59,7 @@ services:
       - TOKENS_AUTH_HOSTS=77.234.215.138:34321,host.docker.internal:4321
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    command: java -Dis.local=true -jar /bombardier.jar
 
 networks:
   external_network:
