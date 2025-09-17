@@ -13,7 +13,7 @@ import java.time.Duration
 class ResilienceConfig {
 
     @Bean
-    fun accountAdapters(
+    fun rateLimiters(
         properties: List<PaymentAccountProperties>,
     ): List<RateLimiter> = properties.map {
         val config = RateLimiterConfig.custom()
