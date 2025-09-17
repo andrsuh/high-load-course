@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.time.Duration
 
 class TokenBucketRateLimiter(
     private val rate: Int,
@@ -49,5 +50,13 @@ class TokenBucketRateLimiter(
                 return true
             }
         }
+    }
+
+    override fun tickBlocking() {
+        TODO("Not yet implemented")
+    }
+
+    override fun tickBlocking(timeout: Duration): Boolean {
+        TODO("Not yet implemented")
     }
 }
