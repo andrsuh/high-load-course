@@ -95,6 +95,10 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun isEnabled() = properties.enabled
 
+    override fun rateLimitPerSec() = properties.rateLimitPerSec
+
+    override fun parallelRequests() = properties.parallelRequests
+
     override fun name() = properties.accountName
 
 }
