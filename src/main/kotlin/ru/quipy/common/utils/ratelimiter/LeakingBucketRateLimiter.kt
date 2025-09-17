@@ -1,4 +1,4 @@
-package ru.quipy.common.utils
+package ru.quipy.common.utils.ratelimiter
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher

@@ -1,4 +1,4 @@
-package ru.quipy.common.utils
+package ru.quipy.common.utils.ratelimiter
 
 class CompositeRateLimiter(
     private val rl1: RateLimiter,

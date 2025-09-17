@@ -1,0 +1,58 @@
+package ru.quipy.common.utils.ratelimiter
+
+import kotlinx.coroutines.*
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+class SlowStartRateLimiter(
+    private val targetRate: Int,
+    private val timeUnit: TimeUnit = TimeUnit.MINUTES,
+    private val slowStartOn: Boolean = true,
+) : RateLimiter {
+    companion object {
+        private val logger: Logger = LoggerFactory.getLogger(SlowStartRateLimiter::class.java)
+        private val counter = AtomicInteger(0)
+        private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+    }
+
+    @Volatile
+    private var currentRate = if (slowStartOn) 1 else targetRate
+
+    private val semaphore = Semaphore(targetRate).also { semaphore ->
+        runBlocking {
+            repeat(targetRate) {
+                runCatching {
+                    semaphore.acquire()
+                }.onFailure { th -> logger.error("Failed while initially acquiring permits", th) }
+            }
+        }
+    }
+    private val rateLimiterNum = counter.getAndIncrement()
+
+    private val releaseJob = rateLimiterScope.launch {
+        while (true) {
+            val start = System.currentTimeMillis()
+            val permitsToRelease = currentRate - semaphore.availablePermits()
+            repeat(permitsToRelease) {
+                runCatching {
+                    semaphore.release()
+                }.onFailure { th -> logger.error("Failed while releasing permits", th) }
+            }
+            logger.trace("Rate limiter ${rateLimiterNum}. Released $permitsToRelease permits")
+
+            if (slowStartOn && currentRate < targetRate) {
+                currentRate = minOf(targetRate, currentRate * 2)
+            }
+
+            delay(timeUnit.toMillis(1) - (System.currentTimeMillis() - start))
+        }
+    }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+
+    override fun tick() = semaphore.tryAcquire()
+
+    fun tickBlocking() = semaphore.acquire()
+}
