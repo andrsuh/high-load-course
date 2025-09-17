@@ -1,9 +1,9 @@
-package ru.quipy.config
+package ru.quipy.payments.logic
 
 import org.springframework.stereotype.Component
 import ru.quipy.common.utils.SlidingWindowRateLimiter
-import java.util.concurrent.ConcurrentHashMap
 import java.time.Duration
+import java.util.concurrent.ConcurrentHashMap
 
 @Component
 class PaymentRateLimiterFactory {
