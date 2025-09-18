@@ -21,9 +21,15 @@ class PaymentSystemImpl(
     )
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        for (account in paymentAccounts) {
-            rateLimiters.getValue(account.name()).tickBlocking()
-            account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+        var paymentPerformed = false
+        while (!paymentPerformed) {
+            paymentPerformed = paymentAccounts.any {
+                if (rateLimiters.getValue(it.name()).tick()) {
+                    it.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+                    return@any true
+                }
+                return@any false
+            }
         }
     }
 }
