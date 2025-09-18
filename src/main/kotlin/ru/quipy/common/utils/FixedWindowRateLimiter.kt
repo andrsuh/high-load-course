@@ -26,7 +26,7 @@ class FixedWindowRateLimiter(
     }
 
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
-    private var semaphore = Semaphore(rate)
+    private var semaphore = Semaphore(rate, true)
     private val semaphoreNumber = counter.getAndIncrement()
 
     private var start = System.currentTimeMillis()
