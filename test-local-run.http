@@ -3,10 +3,10 @@ POST http://localhost:1234/test/run
 Content-Type: application/json
 
 {
-  "serviceName": "{{serviceName}}",
+  "serviceName": "Reability-Disability",
   "token": "{{token}}",
-  "ratePerSecond": 1,
-  "testCount": 100,
+  "ratePerSecond": 11,
+  "testCount": 1200,
   "processingTimeMillis": 80000
 }
 

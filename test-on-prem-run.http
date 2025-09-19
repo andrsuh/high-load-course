@@ -4,12 +4,12 @@ POST http://77.234.215.138:34321/run
 Content-Type: application/json
 
 {
-  "serviceName": "{{serviceName}}",
+  "serviceName": "Reability-Disability",
   "token": "{{token}}",
-  "branch": "main",
-  "accounts": "acc-12,acc-20",
-  "ratePerSecond": 2,
-  "testCount": 10,
+  "branch": "HW-1",
+  "accounts": "acc-3",
+  "ratePerSecond": 11,
+  "testCount": 1200,
   "processingTimeMillis": 80000,
   "onPremises": true
 }
