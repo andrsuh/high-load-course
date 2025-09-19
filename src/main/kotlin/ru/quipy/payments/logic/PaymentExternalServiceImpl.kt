@@ -43,6 +43,7 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
         if (System.currentTimeMillis() > deadline) {
             logger.warn("[$accountName] Payment $paymentId already expired before processing")
             paymentESService.update(paymentId) {
