@@ -13,6 +13,9 @@ import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
+
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -38,6 +41,8 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
     // Используем скользящее для "сглаживания" запросов к внешнему сервису по времени
     private val slidingWindowLimiter = SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
+    private val bulkhead = Semaphore(parallelRequests)
+    // Используем лимит одновременных запросов
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         val now = System.currentTimeMillis()
@@ -49,7 +54,17 @@ class PaymentExternalSystemAdapterImpl(
             }
             return
         }
+
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+
+        val waitForPermit = Duration.ofMillis(timeoutMillis).coerceAtMost(requestAverageProcessingTime)
+        if (!bulkhead.tryAcquire(waitForPermit.toMillis(), TimeUnit.MILLISECONDS)) {
+            logger.warn("[$accountName] Payment $paymentId rejected by bulkhead (parallel limit)")
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), UUID.randomUUID(), reason = "rejected by bulkhead (parallel limit)")
+            }
+            return
+        }
 
         val transactionId = UUID.randomUUID()
 
@@ -100,6 +115,10 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        }
+        finally {
+            bulkhead.release()
+            // освобождаем слот семафора
         }
     }
 

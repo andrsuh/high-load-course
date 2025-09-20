@@ -3,7 +3,6 @@ package ru.quipy.apigateway
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.SlidingWindowRateLimiter
@@ -34,15 +33,8 @@ class APIController {
 
     data class User(val id: UUID, val name: String)
 
-    private val orderFixedWindowLimiter = FixedWindowRateLimiter(rate = 20, window = 1, TimeUnit.SECONDS)
-    private val paymentSlidingWindowLimiter = SlidingWindowRateLimiter(rate = 20, window = Duration.ofSeconds(1))
-
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): ResponseEntity<Order> {
-        if (!orderFixedWindowLimiter.tick()) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build()
-        }
-
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -69,9 +61,6 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
-        if (!paymentSlidingWindowLimiter.tick()) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build()
-        }
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
