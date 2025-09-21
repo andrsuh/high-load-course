@@ -1,4 +1,4 @@
-package ru.quipy.common.utils
+package ru.quipy.common.utils.parallel
 
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger

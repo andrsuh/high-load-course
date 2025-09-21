@@ -6,7 +6,7 @@ import ru.quipy.payments.logic.PaymentAccountProperties
 import java.time.Duration
 
 @Configuration
-class RateLimiterConfig {
+class RateLimiterConfiguration {
 
     @Bean
     fun rateLimiters(
@@ -17,6 +17,7 @@ class RateLimiterConfig {
             .mapValues {
                 when (it.key) {
                     "acc-3" -> SlidingWindowRateLimiter(it.value.rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+                    "acc-5" -> SlidingWindowRateLimiter(it.value.rateLimitPerSec.toLong(), Duration.ofSeconds(1))
                     else -> null
                 }
             }
