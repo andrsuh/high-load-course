@@ -38,7 +38,7 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    private val onGoingWindow = OngoingWindow(parallelRequests);
+    private val onGoingWindow = OngoingWindow(parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -55,7 +55,7 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        rateLimiter.tickBlocking()
+        //rateLimiter.tickBlocking()
         onGoingWindow.acquire()
         try {
             val request = Request.Builder().run {
