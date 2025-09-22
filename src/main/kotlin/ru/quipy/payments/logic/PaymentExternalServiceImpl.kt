@@ -71,6 +71,8 @@ class PaymentExternalSystemAdapterImpl(
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
+                onGoingWindow.release()
+
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
@@ -80,6 +82,8 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } catch (e: Exception) {
+            onGoingWindow.release()
+
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
@@ -96,9 +100,6 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
-        }
-        finally {
-            onGoingWindow.release()
         }
     }
 
