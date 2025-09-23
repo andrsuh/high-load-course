@@ -42,7 +42,6 @@ class PaymentExternalSystemAdapterImpl(
     private val slidingWindowRateLimiter =
         SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val semaphoreToLimitParallelRequest = OngoingWindow(parallelRequests)
-
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         semaphoreToLimitParallelRequest.acquire()
         try {
