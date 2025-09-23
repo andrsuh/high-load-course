@@ -6,14 +6,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.NonBlockingOngoingWindow
-import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.Semaphore
 
 
 // Advice: always treat time as a Duration
@@ -37,8 +36,8 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    private val onGoingWindow = OngoingWindow(parallelRequests)
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong() - 1, Duration.ofSeconds(1))
+    private val semaphore = Semaphore(parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -55,8 +54,8 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        //rateLimiter.tickBlocking()
-        onGoingWindow.acquire()
+        rateLimiter.tickBlocking()
+        semaphore.acquire()
         try {
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
@@ -71,7 +70,7 @@ class PaymentExternalSystemAdapterImpl(
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
-                onGoingWindow.release()
+                semaphore.release()
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
@@ -82,7 +81,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } catch (e: Exception) {
-            onGoingWindow.release()
+            semaphore.release()
 
             when (e) {
                 is SocketTimeoutException -> {
