@@ -22,8 +22,8 @@ class PaymentSystemImpl(
     }
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        for (account in paymentAccounts) {
-            account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+        paymentAccounts.forEach {
+            it.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
         }
     }
 }
