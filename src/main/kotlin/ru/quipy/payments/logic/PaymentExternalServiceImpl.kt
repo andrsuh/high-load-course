@@ -33,6 +33,14 @@ class PaymentExternalSystemAdapterImpl(
         window = Duration.ofSeconds(1)
     )
 
+    private val host = parseHost(paymentProviderHostPort)
+    private val port = parsePort(paymentProviderHostPort)
+    private val baseUrlComponents = mapOf(
+        "serviceName" to serviceName,
+        "token" to token,
+        "accountName" to accountName
+    )
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn(
             "[{}] Submitting payment request for payment {}",
@@ -59,21 +67,20 @@ class PaymentExternalSystemAdapterImpl(
 
         try {
             val request = Request.Builder().run {
-                val urlFromBuilder = HttpUrl.Builder()
+                val url = HttpUrl.Builder()
                     .scheme("http")
-                    .host(paymentProviderHostPort.substringBefore(":"))
-                    .port(paymentProviderHostPort.substringAfter(":").toInt())
+                    .host(host)
+                    .port(port)
                     .addPathSegments("external/process")
-                    .addQueryParameter("serviceName", serviceName)
-                    .addQueryParameter("token", token)
-                    .addQueryParameter("accountName", accountName)
-                    .addQueryParameter("transactionId", transactionId.toString())
-                    .addQueryParameter("paymentId", paymentId.toString())
-                    .addQueryParameter("amount", amount.toString())
+                    .apply {
+                        baseUrlComponents.forEach { (key, value) -> addQueryParameter(key, value) }
+                        addQueryParameter("transactionId", transactionId.toString())
+                        addQueryParameter("paymentId", paymentId.toString())
+                        addQueryParameter("amount", amount.toString())
+                    }
                     .build()
-                    .toString()
 
-                url(urlFromBuilder).
+                url(url).
                 post(emptyBody)
             }.build()
 
@@ -129,6 +136,24 @@ class PaymentExternalSystemAdapterImpl(
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = e.message)
             }
+        }
+    }
+
+    private fun parseHost(hostPort: String): String {
+        val parts = hostPort.split(":")
+        return if (parts.size == 2) {
+            parts[0]
+        } else {
+            hostPort
+        }
+    }
+
+    private fun parsePort(hostPort: String): Int {
+        val parts = hostPort.split(":")
+        return if (parts.size == 2) {
+            parts[1].toInt()
+        } else {
+            80
         }
     }
 
