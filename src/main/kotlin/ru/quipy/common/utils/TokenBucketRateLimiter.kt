@@ -16,9 +16,6 @@ class TokenBucketRateLimiter(
     private val window: Long,
     private val timeUnit: TimeUnit = TimeUnit.MINUTES,
 ): RateLimiter {
-    companion object {
-        private val logger: Logger = LoggerFactory.getLogger(TokenBucketRateLimiter::class.java)
-    }
 
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
@@ -49,5 +46,9 @@ class TokenBucketRateLimiter(
                 return true
             }
         }
+    }
+
+    companion object {
+        private val logger: Logger = LoggerFactory.getLogger(TokenBucketRateLimiter::class.java)
     }
 }

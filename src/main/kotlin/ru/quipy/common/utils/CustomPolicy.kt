@@ -10,9 +10,6 @@ import java.util.concurrent.TimeUnit
 class CallerBlockingRejectedExecutionHandler(
     private val maxWait: Duration = Duration.ofMinutes(30),
 ) : RejectedExecutionHandler {
-    companion object {
-        val logger = LoggerFactory.getLogger(CallerBlockingRejectedExecutionHandler::class.java)
-    }
 
     // Even if event is rejected we will still keep it, trying to put in queue so that not to lose it!
     override fun rejectedExecution(r: Runnable, executor: ThreadPoolExecutor) {
@@ -30,5 +27,9 @@ class CallerBlockingRejectedExecutionHandler(
         } else {
             throw RejectedExecutionException("Executor has been shut down")
         }
+    }
+
+    companion object {
+        val logger = LoggerFactory.getLogger(CallerBlockingRejectedExecutionHandler::class.java)!!
     }
 }

@@ -2,6 +2,7 @@ package ru.quipy.common.utils
 
 import io.github.resilience4j.ratelimiter.RateLimiterConfig
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry
+import io.micrometer.core.instrument.Metrics.counter
 import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -20,10 +21,6 @@ class FixedWindowRateLimiter(
     private val window: Long,
     private val timeUnit: TimeUnit = TimeUnit.MINUTES,
 ): RateLimiter {
-    companion object {
-        private val logger: Logger = LoggerFactory.getLogger(FixedWindowRateLimiter::class.java)
-        private val counter = AtomicInteger(0)
-    }
 
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
     private var semaphore = Semaphore(rate)
@@ -53,6 +50,11 @@ class FixedWindowRateLimiter(
     override fun tick() = semaphore.tryAcquire()
 
     fun tickBlocking() = semaphore.acquire()
+
+    companion object {
+        private val logger: Logger = LoggerFactory.getLogger(FixedWindowRateLimiter::class.java)
+        private val counter = AtomicInteger(0)
+    }
 }
 
 class SlowStartRateLimiter(

@@ -14,14 +14,11 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.util.*
+import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl.Companion.mapper
 
 
 @Configuration
 class PaymentAccountsConfig {
-    companion object {
-        private val javaClient = HttpClient.newBuilder().build()
-        private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
-    }
 
     @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
@@ -60,5 +57,10 @@ class PaymentAccountsConfig {
                     token
                 )
             }
+    }
+
+    companion object {
+        private val javaClient = HttpClient.newBuilder().build()
+        private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
     }
 }
