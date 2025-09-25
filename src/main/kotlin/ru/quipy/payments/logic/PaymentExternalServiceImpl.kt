@@ -2,6 +2,11 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -20,7 +25,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-) : PaymentExternalSystemAdapter {
+) : PaymentExternalSystemAdapter, AutoCloseable {
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
@@ -40,6 +45,9 @@ class PaymentExternalSystemAdapterImpl(
         "token" to token,
         "accountName" to accountName
     )
+
+    private val paymentScope = CoroutineScope(Dispatchers.IO)
+    private val semaphore = Semaphore(permits = parallelRequests, acquiredPermits = 0)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn(
@@ -65,7 +73,14 @@ class PaymentExternalSystemAdapterImpl(
             transactionId
         )
 
+        paymentScope.launch {
+            handleExternalPaymentProcessingRequest(transactionId, paymentId, amount)
+        }
+    }
+
+    private suspend fun handleExternalPaymentProcessingRequest(transactionId: UUID, paymentId: UUID, amount: Int) {
         try {
+            semaphore.acquire()
             val request = Request.Builder().run {
                 val url = HttpUrl.Builder()
                     .scheme("http")
@@ -80,8 +95,7 @@ class PaymentExternalSystemAdapterImpl(
                     }
                     .build()
 
-                url(url).
-                post(emptyBody)
+                url(url).post(emptyBody)
             }.build()
 
             client.newCall(request).execute().use { response ->
@@ -96,7 +110,7 @@ class PaymentExternalSystemAdapterImpl(
                         response.code,
                         response.body?.string()
                     )
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 logger.warn(
@@ -136,6 +150,8 @@ class PaymentExternalSystemAdapterImpl(
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = e.message)
             }
+        } finally {
+            semaphore.release()
         }
     }
 
@@ -162,6 +178,10 @@ class PaymentExternalSystemAdapterImpl(
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
+
+    override fun close() {
+        paymentScope.cancel()
+    }
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)!!
