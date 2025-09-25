@@ -36,3 +36,4 @@ build/
 
 grafana/
 prometheus/
+src/main/resources/.env
