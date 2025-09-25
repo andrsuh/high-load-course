@@ -4,6 +4,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.parallel.ParallelLimiter
 import ru.quipy.common.utils.ratelimiter.RateLimiter
+import java.time.Duration
 import java.util.*
 
 
@@ -24,9 +25,11 @@ class PaymentSystemImpl(
             val pl = parallelLimiters[account.name()]
             val call = { account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline) }
 
-            parallelLimit(pl, deadline) {
+            logger.info("BEFORE_LIMITERS")
+            parallelLimit(pl, deadline - Duration.ofSeconds(5).toMillis()) {
                 rateLimit(rl, deadline) {
                     call()
+                    logger.info("SUCCESS_CALL")
                 }
             }
         }
