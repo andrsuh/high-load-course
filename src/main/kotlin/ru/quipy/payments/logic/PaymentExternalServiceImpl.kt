@@ -13,7 +13,6 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import kotlin.math.ceil
 
 
 // Advice: always treat time as a Duration
@@ -38,13 +37,17 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val client = OkHttpClient.Builder().build()
+
     // Используем скользящее окно для более точного ограничения скорости
     // + оптимизированный rate
-    private val optimizedRate = maxOf(minOf(
-        rateLimitPerSec.toDouble(),
-        parallelRequests.toDouble() / requestAverageProcessingTime.seconds.toDouble()
-    ).toInt(), 1)
-    private val outboundLimiter = SlidingWindowRateLimiter(rate = optimizedRate.toLong(), window = Duration.ofSeconds(1))
+    private val optimizedRate = maxOf(
+        minOf(
+            rateLimitPerSec.toDouble(),
+            parallelRequests.toDouble() / requestAverageProcessingTime.seconds.toDouble()
+        ).toInt(), 1
+    )
+    private val outboundLimiter =
+        SlidingWindowRateLimiter(rate = optimizedRate.toLong(), window = Duration.ofSeconds(1))
 
     private val ongoingWindow = OngoingWindow(maxWinSize = parallelRequests, fair = true)
 
@@ -92,7 +95,7 @@ class PaymentExternalSystemAdapterImpl(
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
