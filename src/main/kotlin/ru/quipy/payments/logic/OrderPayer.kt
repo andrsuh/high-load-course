@@ -30,22 +30,34 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val paymentExecutor = ThreadPoolExecutor(
-        30,
-        30,
-        0L,
-        TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(150),
-        NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
-    )
+    @Autowired
+    private lateinit var accountAdapters: List<PaymentExternalSystemAdapter>
 
-    private val rateLimit = SlidingWindowRateLimiter(
-        rate = 10,
-        window = Duration.ofSeconds(1),
-    )
+    private val accountProperties: PaymentAccountProperties by lazy {
+        accountAdapters.firstOrNull()?.getAccountProperties()
+            ?: throw IllegalStateException("No payment accounts configured")
+    }
 
-    private val parallelLimiter = Semaphore(30)
+    private val paymentExecutor: ThreadPoolExecutor by lazy {
+        ThreadPoolExecutor(
+            accountProperties.parallelRequests,
+            accountProperties.parallelRequests,
+            0L,
+            TimeUnit.MILLISECONDS,
+            LinkedBlockingQueue(accountProperties.parallelRequests * 10),
+            NamedThreadFactory("payment-submission-executor"),
+            CallerBlockingRejectedExecutionHandler()
+        )
+    }
+
+    private val rateLimit: SlidingWindowRateLimiter by lazy {
+        SlidingWindowRateLimiter(
+            rate = accountProperties.rateLimitPerSec.toLong(),
+            window = Duration.ofSeconds(1),
+        )
+    }
+
+    private val parallelLimiter = Semaphore(5)
 
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
@@ -53,8 +65,8 @@ class OrderPayer {
         parallelLimiter.acquire()
 
         return try {
-            while(!rateLimit.tick()) {
-                delay(10)
+            while (!rateLimit.tick()) {
+                delay(100)
             }
 
             paymentExecutor.submit {
@@ -62,7 +74,7 @@ class OrderPayer {
                     val createdEvent = paymentESService.create {
                         it.create(paymentId, orderId, amount)
                     }
-                    logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+                    logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
                     paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
                 } finally {
                     parallelLimiter.release()
