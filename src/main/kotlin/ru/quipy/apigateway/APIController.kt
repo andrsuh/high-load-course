@@ -50,7 +50,7 @@ class APIController {
     }
 
     private val orderCreationLimiter = FixedWindowRateLimiter(rate = 50, window = 1, TimeUnit.SECONDS)
-    private val paymentLimiter = SlidingWindowRateLimiter(rate = 30, window = Duration.ofSeconds(1))
+    private val paymentLimiter = SlidingWindowRateLimiter(rate = 1, window = Duration.ofSeconds(1))
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): ResponseEntity<Order> {

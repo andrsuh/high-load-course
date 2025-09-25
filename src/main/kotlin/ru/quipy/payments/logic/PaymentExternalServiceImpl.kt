@@ -7,11 +7,13 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
+import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import kotlin.math.ceil
 
 
 // Advice: always treat time as a Duration
@@ -37,17 +39,34 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
     // Используем скользящее окно для более точного ограничения скорости
-    private val outboundLimiter = SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
+    // + оптимизированный rate
+    private val optimizedRate = maxOf(minOf(
+        rateLimitPerSec.toDouble(),
+        parallelRequests.toDouble() / requestAverageProcessingTime.seconds.toDouble()
+    ).toInt(), 1)
+    private val outboundLimiter = SlidingWindowRateLimiter(rate = optimizedRate.toLong(), window = Duration.ofSeconds(1))
+
+    private val ongoingWindow = OngoingWindow(maxWinSize = parallelRequests, fair = true)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         val now = System.currentTimeMillis()
-        val timeoutMillis = maxOf(0, deadline - now)
+        var timeoutMillis = maxOf(0, deadline - now)
         if (!outboundLimiter.tickBlocking(Duration.ofMillis(timeoutMillis))) {
             // Если не удалось получить данные в лимит - log и record
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), UUID.randomUUID(), reason = "rate-limited before submit")
             }
             logger.warn("[$accountName] Rate limited payment $paymentId before outbound call")
+            return
+        }
+
+        timeoutMillis = maxOf(0, deadline - System.currentTimeMillis())
+        if (!ongoingWindow.tryAcquire(Duration.ofMillis(timeoutMillis))) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), UUID.randomUUID(), reason = "window-limited before submit")
+            }
+            // Возможно, информацию об очереди в будущем можно будет вынести в метрики
+            logger.warn("[$accountName] Window limited payment $paymentId before outbound call. Queued=${ongoingWindow.awaitingQueueSize()} fair=${ongoingWindow.isFair()}")
             return
         }
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -101,6 +120,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            ongoingWindow.release()
         }
     }
 
