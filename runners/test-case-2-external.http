@@ -1,0 +1,19 @@
+### Run test remotely
+# @timeout 120
+POST http://77.234.215.138:34321/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "branch": "main",
+  "accounts": "acc-5",
+  "ratePerSecond": 2,
+  "testCount": 100,
+  "processingTimeMillis": 60000,
+  "onPremises": true
+}
+
+### Stop running test to save credits
+# @timeout 120
+POST http://77.234.215.138:31234/test/stop/"{{serviceName}}"
