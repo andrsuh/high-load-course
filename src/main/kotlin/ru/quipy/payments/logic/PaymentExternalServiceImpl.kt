@@ -47,7 +47,7 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     private val paymentScope = CoroutineScope(Dispatchers.IO)
-    private val semaphore = Semaphore(permits = parallelRequests, acquiredPermits = 0)
+    private val semaphore = Semaphore(permits = parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn(
