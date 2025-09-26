@@ -12,7 +12,7 @@ class RateLimiterConfig {
     @Bean
     fun orderRateLimiter(): RateLimiter {
         return SlidingWindowRateLimiter(
-            rate = 100, // Высокий лимит для orders - не они bottleneck
+            rate = 100,
             window = Duration.ofSeconds(1)
         )
     }
@@ -20,7 +20,7 @@ class RateLimiterConfig {
     @Bean
     fun paymentRateLimiter(): RateLimiter {
         return SlidingWindowRateLimiter(
-            rate = 10, // Строгий лимит только для payments - 10 RPS как в acc-3
+            rate = 10,
             window = Duration.ofSeconds(1)
         )
     }
