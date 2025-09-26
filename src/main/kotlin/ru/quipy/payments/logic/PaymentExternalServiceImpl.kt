@@ -38,7 +38,14 @@ class PaymentExternalSystemAdapterImpl(
 
     private val limiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
-        window = Duration.ofSeconds(1)
+        window = Duration.ofMillis(rateLimitPerSec * 1000 / (parallelRequests * 1000 / requestAverageProcessingTime.toMillis()))
+        /*
+        * rate limit payment system = 3
+        * parallel reqs payment system = 5
+        * time payment system = 4.9
+        * 1 / 4.9 * 5 = 1.02 (сколько всего обрабаиывают все потоки в секунду)
+        * 3 / 1.02 (за какое время могут пройти 3 запроса) = 2.94
+        */
     )
 
     // Семафор для ограничения параллельных вызовов
