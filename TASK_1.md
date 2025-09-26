@@ -362,4 +362,10 @@ sum(increase(payment_finished_total{outcome="FAIL"}[10m]))
 3. **Optimized timeouts**: Меньше timeout ошибок
 4. **Enhanced error handling**: Агрессивные retry для всех типов ошибок
 
+### Локальные результаты
+![grafana_success_local.png](pics/task_1/grafana_success_local.png)
+
+### Удаленные результаты
+![grafana_success_external.png](pics/task_1/grafana_success_external.png)
+
 ---
