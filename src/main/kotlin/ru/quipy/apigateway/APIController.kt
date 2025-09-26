@@ -4,12 +4,17 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.web.bind.annotation.*
+import org.springframework.http.HttpStatus
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import ru.quipy.common.utils.RateLimiter
 import java.util.*
 
 @RestController
-class APIController {
+class APIController(
+    private val orderRateLimiter: RateLimiter,
+    private val paymentRateLimiter: RateLimiter
+) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
@@ -72,3 +77,6 @@ class APIController {
         val transactionId: UUID
     )
 }
+
+@ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
+class TooManyRequestsException(message: String) : RuntimeException(message)
