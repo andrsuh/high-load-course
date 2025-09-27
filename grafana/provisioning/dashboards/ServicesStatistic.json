@@ -114,7 +114,7 @@
         {
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "increase(queries_amount_total[$__rate_interval])",
+          "expr": "rate(queries_amount_total[30s])",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "legendFormat": "__auto",
