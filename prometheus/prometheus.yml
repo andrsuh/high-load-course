@@ -19,3 +19,7 @@ scrape_configs:
     metrics_path: '/actuator/prometheus'
     static_configs:
       - targets: ['host.docker.internal:18081']
+  - job_name: 'local-online-shop-job'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+        - targets: ['localhost:8081']
