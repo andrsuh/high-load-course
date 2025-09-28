@@ -12,7 +12,9 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
+import java.time.Instant
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -54,8 +56,20 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        ongoingWindow.acquire()
-        rateLimiter.tickBlocking()
+        val leftTime = ongoingWindow.acquireWithTimeout(deadline - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
+        if (leftTime == null){
+            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId timeouted on our service side")
+
+            return
+        }
+
+        val timeOuted = rateLimiter.tickBlocking(leftTime, TimeUnit.MILLISECONDS)
+        if (timeOuted){
+            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId timeouted on our service side")
+
+            return
+        }
+
         try {
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
