@@ -12,7 +12,6 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.time.Instant
 import java.util.*
 import java.util.concurrent.TimeUnit
 
@@ -56,16 +55,28 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        val leftTime = ongoingWindow.acquireWithTimeout(deadline - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
-        if (leftTime == null){
+        val acquired = ongoingWindow
+            .acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
+
+        if (!acquired) {
+            // сюда метрику таймаута
             logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId timeouted on our service side")
+
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId)
+            }
 
             return
         }
 
-        val timeOuted = rateLimiter.tickBlocking(leftTime, TimeUnit.MILLISECONDS)
+        val timeOuted = rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
         if (timeOuted){
+            // сюда ту же метрику таймаута
             logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId timeouted on our service side")
+
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId)
+            }
 
             return
         }
@@ -84,8 +95,6 @@ class PaymentExternalSystemAdapterImpl(
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
-                ongoingWindow.release()
-
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
@@ -95,8 +104,6 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } catch (e: Exception) {
-            ongoingWindow.release()
-
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
@@ -113,6 +120,9 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        }
+        finally {
+            ongoingWindow.release()
         }
     }
 
