@@ -40,6 +40,7 @@ class SlidingWindowRateLimiter(
     }
 
     fun tickBlocking(timeout: Long, unit: TimeUnit): Boolean {
+        if (timeout <= 0) return false
         val start = now()
         val timeoutMillis = unit.toMillis(timeout)
 

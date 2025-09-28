@@ -54,28 +54,22 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-
-        try {
-            var timeout = deadline - now() - (requestAverageProcessingTime.toMillis()).toLong()
-            if (timeout <= 0 ||
-                !ongoingWindow.acquire(timeout, TimeUnit.MILLISECONDS)) {
-                // сюда метрику таймаута
-                logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId)
-                }
-
-                return
+        if (!ongoingWindow.acquire(deadline - now() - (requestAverageProcessingTime.toMillis() * 1.5).toLong(), TimeUnit.MILLISECONDS)) {
+            // сюда метрику таймаута
+            logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
+            paymentESService.update(paymentId) {
+                it.logProcessing(true, now(), transactionId)
             }
 
-            timeout = deadline - now() - (requestAverageProcessingTime.toMillis()).toLong()
+            return
+        }
 
-            if (timeout <= 0 ||
-                !rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
+        try {
+            if (!rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
                 // сюда ту же метрику таймаута
                 logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
                 paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId)
+                    it.logProcessing(true, now(), transactionId)
                 }
 
                 return
