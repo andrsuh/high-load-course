@@ -24,7 +24,8 @@ class APIController(
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    private val counter = Counter.builder("queries.amount").register(registry)
+    private val counter = Counter.builder("queries.amount").tag("name", "orders").register(registry)
+    private val counterPayment = Counter.builder("queries.amount").tag("name", "payment").register(registry)
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
@@ -37,6 +38,7 @@ class APIController(
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+        counter.increment()
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -45,7 +47,6 @@ class APIController(
             price,
         )
         var save = orderRepository.save(order)
-        counter.increment()
         return save
     }
 
@@ -72,6 +73,7 @@ class APIController(
         } ?: throw IllegalArgumentException("No such order $orderId")
 
 
+        counterPayment.increment()
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         return PaymentSubmissionDto(createdAt, paymentId)
     }
