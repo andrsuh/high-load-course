@@ -69,8 +69,8 @@ class PaymentExternalSystemAdapterImpl(
             return
         }
 
-        val timeOuted = rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
-        if (timeOuted){
+        val inRateLimit = rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
+        if (!inRateLimit){
             // сюда ту же метрику таймаута
             logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId timeouted on our service side")
 
