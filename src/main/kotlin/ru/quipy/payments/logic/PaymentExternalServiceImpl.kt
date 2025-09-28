@@ -61,9 +61,9 @@ class PaymentExternalSystemAdapterImpl(
                 !ongoingWindow.acquire(timeout, TimeUnit.MILLISECONDS)) {
                 // сюда метрику таймаута
                 logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
-//                paymentESService.update(paymentId) {
-//                    it.logProcessing(false, now(), transactionId)
-//                }
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId)
+                }
 
                 return
             }
@@ -74,9 +74,9 @@ class PaymentExternalSystemAdapterImpl(
                 !rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
                 // сюда ту же метрику таймаута
                 logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
-//                paymentESService.update(paymentId) {
-//                    it.logProcessing(false, now(), transactionId)
-//                }
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId)
+                }
 
                 return
             }
