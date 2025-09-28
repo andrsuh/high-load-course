@@ -56,24 +56,28 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
-            ongoingWindow.acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
-
-            if (isDeadlineExceeded(deadline)) {
+            var timeout = deadline - now() - (requestAverageProcessingTime.toMillis()).toLong()
+            if (timeout <= 0 ||
+                !ongoingWindow.acquire(timeout, TimeUnit.MILLISECONDS)) {
                 // сюда метрику таймаута
                 logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId)
-                }
+//                paymentESService.update(paymentId) {
+//                    it.logProcessing(false, now(), transactionId)
+//                }
+
                 return
             }
 
-            rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
-            if (isDeadlineExceeded(deadline)){
+            timeout = deadline - now() - (requestAverageProcessingTime.toMillis()).toLong()
+
+            if (timeout <= 0 ||
+                !rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
                 // сюда ту же метрику таймаута
                 logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId)
-                }
+//                paymentESService.update(paymentId) {
+//                    it.logProcessing(false, now(), transactionId)
+//                }
+
                 return
             }
 
@@ -126,9 +130,6 @@ class PaymentExternalSystemAdapterImpl(
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
-
-    fun isDeadlineExceeded(deadline: Long): Boolean =
-        now() + requestAverageProcessingTime.toMillis() * 1.3 >= deadline
 }
 
 public fun now() = System.currentTimeMillis()
