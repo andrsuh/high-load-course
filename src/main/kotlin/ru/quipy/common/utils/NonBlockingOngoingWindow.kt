@@ -1,6 +1,5 @@
 package ru.quipy.common.utils
 
-import java.time.Instant
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -14,19 +13,8 @@ class OngoingWindow(
         window.acquire()
     }
 
-    fun acquireWithTimeout(timeout: Long, unit: TimeUnit) : Long? {
-        val timeNow = Instant.now().toEpochMilli()
-        val timeoutMillis = unit.toMillis(timeout)
-
-        val hasAcquired = window.tryAcquire(timeoutMillis, TimeUnit.MILLISECONDS);
-
-        if (hasAcquired) {
-            val usedTime = Instant.now().toEpochMilli() - timeNow
-            return timeoutMillis - usedTime
-        }
-
-        return null
-    }
+    fun acquire(timeout: Long, unit: TimeUnit) : Boolean =
+        window.tryAcquire(unit.toMillis(timeout), TimeUnit.MILLISECONDS);
 
     fun release() = window.release()
 
