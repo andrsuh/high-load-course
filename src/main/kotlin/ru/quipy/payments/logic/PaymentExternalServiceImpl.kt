@@ -55,33 +55,28 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        val acquired = ongoingWindow
-            .acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
-
-        if (!acquired) {
-            // сюда метрику таймаута
-            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId timeouted on our service side")
-
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId)
-            }
-
-            return
-        }
-
-        val inRateLimit = rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
-        if (!inRateLimit){
-            // сюда ту же метрику таймаута
-            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId timeouted on our service side")
-
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId)
-            }
-
-            return
-        }
-
         try {
+            ongoingWindow.acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
+
+            if (isDeadlineExceeded(deadline)) {
+                // сюда метрику таймаута
+                logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId)
+                }
+                return
+            }
+
+            rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)
+            if (isDeadlineExceeded(deadline)){
+                // сюда ту же метрику таймаута
+                logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId)
+                }
+                return
+            }
+
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
@@ -132,6 +127,8 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
+    fun isDeadlineExceeded(deadline: Long): Boolean =
+        now() + requestAverageProcessingTime.toMillis() * 1.3 >= deadline
 }
 
 public fun now() = System.currentTimeMillis()
