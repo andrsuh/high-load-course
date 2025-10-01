@@ -2,15 +2,24 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.ratelimiter.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.*
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.min
 
 
 // Advice: always treat time as a Duration
@@ -36,7 +45,34 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
+    private val scheduledExecutorScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+    private val paymentExecutor = ThreadPoolExecutor(
+        16,
+        16,
+        0L,
+        TimeUnit.MILLISECONDS,
+        LinkedBlockingQueue(8_000),
+        NamedThreadFactory("payment-submission-executor"),
+        CallerBlockingRejectedExecutionHandler()
+    )
+
+    private val queue = PriorityBlockingQueue<PaymentRequest>(parallelRequests)
+    private val outgoingRateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L))
+    private val inFlightRequests = AtomicInteger(0)
+
+    override fun canAcceptPayment(deadline: Long): Boolean {
+        val ownRps = rateLimitPerSec.toDouble()
+        val providerRps = 1 / requestAverageProcessingTime.toSeconds().toDouble() * rateLimitPerSec.toDouble()
+
+        val bestRps = min(ownRps, providerRps)
+        return deadline.toDouble() >= now().toDouble() + (queue.size + 1).toDouble() / bestRps * 1000
+    }
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        queue.add(PaymentRequest(deadline) { executePayment(paymentId, amount, paymentStartedAt, deadline) })
+    }
+
+    fun executePayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -60,7 +96,7 @@ class PaymentExternalSystemAdapterImpl(
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
@@ -97,6 +133,45 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
+    private fun pollQueue() {
+        val paymentRequest = queue.poll()
+
+        if (paymentRequest === null) {
+            return
+        }
+
+        if (inFlightRequests.incrementAndGet() > parallelRequests) {
+            inFlightRequests.decrementAndGet()
+            queue.add(paymentRequest)
+
+            return
+        }
+
+        if (!outgoingRateLimiter.tick()) {
+            inFlightRequests.decrementAndGet()
+            queue.add(paymentRequest)
+
+            return
+        }
+
+        paymentExecutor.submit {
+            paymentRequest.call.run()
+            inFlightRequests.decrementAndGet()
+        }
+    }
+
+    private val releaseJob = scheduledExecutorScope.launch {
+        while (true) {
+            pollQueue()
+        }
+    }
 }
 
 public fun now() = System.currentTimeMillis()
+
+data class PaymentRequest(
+    val deadline: Long,
+    val call: Runnable,
+) : Comparable<PaymentRequest> {
+    override fun compareTo(other: PaymentRequest): Int = deadline.compareTo(other.deadline)
+}
