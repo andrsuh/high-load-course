@@ -38,7 +38,7 @@ class SlidingWindowRateLimiter(
             if (tick()) {
                 return true
             }
-            Thread.sleep(6000)
+            Thread.sleep(3000)
         }
         return false
     }
