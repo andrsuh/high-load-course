@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
+import ru.quipy.metrics.MetricsCollector
 import ru.quipy.payments.api.PaymentAggregate
 import java.time.Duration
 import java.util.*
@@ -17,6 +18,7 @@ import kotlin.concurrent.withLock
 class PaymentSystemImpl(
     private val paymentAccounts: List<PaymentExternalSystemAdapter>
 ) : PaymentService {
+    val metricsCollector = MetricsCollector()
     companion object {
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
     }
@@ -24,6 +26,8 @@ class PaymentSystemImpl(
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         for (account in paymentAccounts) {
             account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+
+            metricsCollector.incomingRequestInc(account.name())
         }
     }
 }
