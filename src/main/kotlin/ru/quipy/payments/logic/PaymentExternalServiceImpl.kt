@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -15,6 +16,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -23,7 +25,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-    private val registry: MeterRegistry
+    private val registry : MeterRegistry
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -41,17 +43,36 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().build()
-
+    private val semaphoreToLimitParallelRequest =
+        OngoingWindow(rateLimitPerSec * requestAverageProcessingTime.toSeconds().toInt())
     private val slidingWindowRateLimiter =
         SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    private val semaphoreToLimitParallelRequest = OngoingWindow(parallelRequests)
-
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(130, TimeUnit.SECONDS)
+        .dispatcher(
+            Dispatcher().apply {
+                maxRequests = parallelRequests * 2
+                maxRequestsPerHost = parallelRequests * 2
+            }
+        ).build()
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        semaphoreToLimitParallelRequest.acquire()
+        val remainder = deadline - System.currentTimeMillis()
+        if (remainder <= 0) {
+            return
+        }
+        val timeout = Duration.ofMillis(remainder)
+        if (!semaphoreToLimitParallelRequest.tryAcquire(timeout)) {
+            return
+        }
+
         try {
             logger.warn("[$accountName] Submitting payment request for payment $paymentId")
-            slidingWindowRateLimiter.tickBlocking()
+
+            if (!slidingWindowRateLimiter.tick(timeout)) {
+                return
+            }
 
             val transactionId = UUID.randomUUID()
 

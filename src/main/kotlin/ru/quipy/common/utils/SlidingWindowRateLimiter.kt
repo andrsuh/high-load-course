@@ -33,6 +33,16 @@ class SlidingWindowRateLimiter(
         }
     }
 
+    fun tick(timeout: Duration): Boolean {
+        while (System.nanoTime() < System.nanoTime() + timeout.toNanos()) {
+            if (tick()) {
+                return true
+            }
+            Thread.sleep(6000)
+        }
+        return false
+    }
+
     fun tickBlocking() {
         while (!tick()) {
             Thread.sleep(10)
