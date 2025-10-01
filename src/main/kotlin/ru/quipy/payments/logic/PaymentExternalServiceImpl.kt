@@ -40,7 +40,10 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val ongoingWindow = OngoingWindow(parallelRequests)
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient
+        .Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -54,22 +57,22 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-        if (!ongoingWindow.acquire(deadline - now() - (requestAverageProcessingTime.toMillis() * 1.3).toLong(), TimeUnit.MILLISECONDS)) {
+        if (!ongoingWindow.acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
             // сюда метрику таймаута
             logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
             paymentESService.update(paymentId) {
-                it.logProcessing(true, now(), transactionId)
+                it.logProcessing(false, now(), transactionId)
             }
 
             return
         }
 
         try {
-            if (!rateLimiter.tickBlocking(deadline - now() - (requestAverageProcessingTime.toMillis() * 1.3).toLong(), TimeUnit.MILLISECONDS)) {
+            if (!rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
                 // сюда ту же метрику таймаута
                 logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
                 paymentESService.update(paymentId) {
-                    it.logProcessing(true, now(), transactionId)
+                    it.logProcessing(false, now(), transactionId)
                 }
 
                 return
