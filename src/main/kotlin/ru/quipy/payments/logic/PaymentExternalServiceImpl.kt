@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
+import ru.quipy.metrics.MetricsCollector
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
@@ -23,6 +24,8 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentProviderHostPort: String,
     private val token: String,
 ) : PaymentExternalSystemAdapter {
+
+    private val metricsCollector = MetricsCollector()
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -57,7 +60,6 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
         if (!ongoingWindow.acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
-            // сюда метрику таймаута
             logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId)
@@ -77,6 +79,7 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
+            metricsCollector.outgoingRequestInc(accountName)
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
