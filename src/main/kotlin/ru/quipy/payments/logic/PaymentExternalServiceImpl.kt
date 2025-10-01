@@ -38,6 +38,8 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    // Кейс 3 Если поставить окно больше, например 14, будет лететь parallel_request_limit_breached, но он почему-то не считает
+    // их за неукспешное выпольнение, и тогда будет 90 процентов успеха и нормальный income. Но мы так делать не будем - это неправильно
     private val ongoingWindow = OngoingWindow(parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
