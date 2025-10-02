@@ -61,4 +61,10 @@ class PaymentAccountsConfig {
                 )
             }
     }
+
+    @Bean
+    fun getAccountProperties(accountAdapters: List<PaymentExternalSystemAdapter>): PaymentAccountProperties {
+        return accountAdapters.firstOrNull()?.getAccountProperties()
+            ?: throw IllegalStateException("No payment accounts configured")
+    }
 }
