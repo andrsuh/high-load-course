@@ -8,14 +8,9 @@ import ru.quipy.payments.logic.OrderPayer
 import java.util.*
 
 @RestController
-class APIController(orderRepository: OrderRepository, orderPayer: OrderPayer) {
+class APIController(private val orderRepository: OrderRepository, private val orderPayer: OrderPayer) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
-
-    private lateinit var orderRepository: OrderRepository
-
-    private lateinit var orderPayer: OrderPayer
-
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
