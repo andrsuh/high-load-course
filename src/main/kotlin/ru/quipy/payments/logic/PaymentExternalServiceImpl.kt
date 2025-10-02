@@ -2,8 +2,11 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import okhttp3.OkHttpClient
@@ -24,7 +27,27 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    meterRegistry: MeterRegistry
 ) : PaymentExternalSystemAdapter {
+    private val incomingRegCounted: Counter = Counter.builder("incoming started")
+        .description("incoming started request")
+        .tag("account", properties.accountName)
+        .register(meterRegistry)
+
+    private val incomingFinishedReqCounted: Counter = Counter.builder("incoming finished")
+        .description("incoming finished request")
+        .tag("account", properties.accountName)
+        .register(meterRegistry)
+
+    private val outgoingReqCounted: Counter = Counter.builder("outgoing started")
+        .description("outgoing started request")
+        .tag("account", properties.accountName)
+        .register(meterRegistry)
+
+    private val outgoingFinishedReqCounted: Counter = Counter.builder("outgoing finished")
+        .description("outgoing finished request")
+        .tag("account", properties.accountName)
+        .register(meterRegistry)
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -49,6 +72,8 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UUID.randomUUID()
 
+        incomingRegCounted.increment()
+
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
         paymentESService.update(paymentId) {
@@ -61,6 +86,7 @@ class PaymentExternalSystemAdapterImpl(
             semaphore.acquire()
 
             try {
+                outgoingReqCounted.increment()
                 val request = Request.Builder().run {
                     url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                     post(emptyBody)
@@ -101,9 +127,11 @@ class PaymentExternalSystemAdapterImpl(
                         }
                     }
                 }
+            } finally {
+                semaphore.release()
+                outgoingFinishedReqCounted.increment()
+                incomingFinishedReqCounted.increment()
             }
-
-            semaphore.release()
         }
     }
 
