@@ -37,7 +37,7 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = rateLimitPerSec.toLong(),
+        rate = parallelRequests.toLong(),
         window = Duration.ofMillis(4900)
         /*
         * rate limit payment system = 3
@@ -46,6 +46,11 @@ class PaymentExternalSystemAdapterImpl(
         * 1 / 4.9 * 5 = 1.02 (сколько всего обрабаиывают все потоки в секунду)
         * 3 / 1.02 (за какое время могут пройти 3 запроса) = 2.94
         */
+    )
+
+    private val hardLimiter = SlidingWindowRateLimiter(
+        rate = rateLimitPerSec.toLong(),
+        window = Duration.ofSeconds(1)
     )
 
     // Семафор для ограничения параллельных вызовов
@@ -67,6 +72,8 @@ class PaymentExternalSystemAdapterImpl(
         try {
             semaphore.acquire()
             try {
+                hardLimiter.tickBlocking()
+
                 val request = Request.Builder().run {
                     url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                     post(emptyBody)
