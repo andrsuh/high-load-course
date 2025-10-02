@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
@@ -59,6 +61,11 @@ class PaymentExternalSystemAdapterImpl(
     private val queue = PriorityBlockingQueue<PaymentRequest>(parallelRequests)
     private val outgoingRateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L))
     private val inFlightRequests = AtomicInteger(0)
+
+    val queuedRequestsMetric = Gauge.builder("payment_queued_requests", queue) { queue.size.toDouble() }
+        .description("Total number of queued requests")
+        .tag("accountName", accountName)
+        .register(Metrics.globalRegistry)
 
     override fun canAcceptPayment(deadline: Long): Boolean {
         val ownRps = rateLimitPerSec.toDouble()
