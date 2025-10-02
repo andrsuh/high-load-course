@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.Metrics
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -44,20 +46,25 @@ class PaymentExternalSystemAdapterImpl(
     )
     
     private val ongoingWindow = OngoingWindow(parallelRequests)
+    
+    private val incomingRequestsCounter = Counter.builder("payment_requests_incoming")
+        .tag("accountName", accountName)
+        .description("Incoming payment requests count")
+        .register(Metrics.globalRegistry)
+        
+    private val completedRequestsCounter = Counter.builder("payment_requests_completed")
+        .tag("accountName", accountName)
+        .description("Completed payment requests count")
+        .register(Metrics.globalRegistry)
+        
+    private val expiredRequestsCounter = Counter.builder("payment_requests_expired")
+        .tag("accountName", accountName)
+        .description("Expired payment requests count")
+        .register(Metrics.globalRegistry)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        incomingRequestsCounter.increment()
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
-        if (System.currentTimeMillis() > deadline) {
-            logger.warn("[$accountName] Payment $paymentId already expired before processing")
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = false, UUID.randomUUID(), now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), UUID.randomUUID(), reason = "Deadline exceeded before processing")
-            }
-            return
-        }
-
         ongoingWindow.acquire()
         try {
             while (!rateLimiter.tick()) {
@@ -69,6 +76,7 @@ class PaymentExternalSystemAdapterImpl(
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), UUID.randomUUID(), reason = "Deadline exceeded while waiting for rate limit")
                     }
+                    expiredRequestsCounter.increment()
                     return
                 }
             }
@@ -124,6 +132,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } finally {
+            completedRequestsCounter.increment()
             ongoingWindow.release()
         }
     }
