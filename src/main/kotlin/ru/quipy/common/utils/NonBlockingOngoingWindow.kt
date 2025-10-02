@@ -14,10 +14,6 @@ class OngoingWindow(
         window.acquire()
     }
 
-    fun tryAcquire(timeout: Duration): Boolean {
-        return window.tryAcquire(timeout.toMillis(), TimeUnit.SECONDS)
-    }
-
     fun release() = window.release()
 
     fun awaitingQueueSize() = window.queueLength
