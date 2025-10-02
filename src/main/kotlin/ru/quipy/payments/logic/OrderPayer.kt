@@ -57,7 +57,7 @@ class OrderPayer {
         )
     }
 
-    private val parallelLimiter = Semaphore(5)
+    private val parallelLimiter = Semaphore(5) //Good men!!!
 
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
