@@ -84,8 +84,6 @@ class PaymentExternalSystemAdapterImpl(
 
             logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-            counter.increment()
-
             try {
                 val request = Request.Builder().run {
                     url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
@@ -107,6 +105,7 @@ class PaymentExternalSystemAdapterImpl(
                     paymentESService.update(paymentId) {
                         it.logProcessing(body.result, now(), transactionId, reason = body.message)
                     }
+                    counter.increment()
                 }
             } catch (e: Exception) {
                 when (e) {
