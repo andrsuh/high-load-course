@@ -1,5 +1,6 @@
 package ru.quipy.apigateway
 
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -29,6 +30,7 @@ class APIController {
     data class User(val id: UUID, val name: String)
 
     @PostMapping("/orders")
+    @RateLimiter(name = "createOrder")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
         val order = Order(
             UUID.randomUUID(),
@@ -55,6 +57,7 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
+    @RateLimiter(name = "payOrder")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {

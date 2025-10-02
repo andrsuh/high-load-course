@@ -1,0 +1,17 @@
+{
+	"ulid": "01K6JG458J4PCH7RQCCW465PNZ",
+	"minTime": 1759399200177,
+	"maxTime": 1759406400000,
+	"stats": {
+		"numSamples": 591963,
+		"numSeries": 826,
+		"numChunks": 4909
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01K6JG458J4PCH7RQCCW465PNZ"
+		]
+	},
+	"version": 1
+}

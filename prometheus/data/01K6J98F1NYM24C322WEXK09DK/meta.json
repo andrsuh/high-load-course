@@ -1,0 +1,17 @@
+{
+	"ulid": "01K6J98F1NYM24C322WEXK09DK",
+	"minTime": 1759392001150,
+	"maxTime": 1759399200000,
+	"stats": {
+		"numSamples": 531901,
+		"numSeries": 815,
+		"numChunks": 1371
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01K6J98F1NYM24C322WEXK09DK"
+		]
+	},
+	"version": 1
+}
