@@ -2,21 +2,19 @@ package ru.quipy.apigateway
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.web.bind.annotation.*
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.util.*
 
 @RestController
-class APIController(orderRepository: OrderRepository,  orderPayer: OrderPayer){
+class APIController(orderRepository: OrderRepository, orderPayer: OrderPayer) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
     private lateinit var orderRepository: OrderRepository
 
     private lateinit var orderPayer: OrderPayer
-
 
 
     @PostMapping("/users")
