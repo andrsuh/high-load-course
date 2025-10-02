@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import ru.quipy.payments.logic.PaymentRateLimiterFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -13,6 +14,7 @@ import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 
 // Advice: always treat time as a Duration
@@ -21,12 +23,12 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-    private val rateLimiterFactory: PaymentRateLimiterFactory
+    private val rateLimiterFactory: PaymentRateLimiterFactory,
+    private val metricsReporter: MetricsReporter
 ) : PaymentExternalSystemAdapter {
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
-
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
     }
@@ -46,6 +48,7 @@ class PaymentExternalSystemAdapterImpl(
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         paymentExecutor.submit {
             try {
+                metricsReporter.incrementOutgoing()
                 rateLimiter.tickBlocking()
 
                 executePayment(paymentId, amount, paymentStartedAt, deadline)
@@ -89,6 +92,12 @@ class PaymentExternalSystemAdapterImpl(
                 paymentESService.update(paymentId) {
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
+
+                if (body.result) {
+                    metricsReporter.incrementCompleted()
+                } else {
+                    metricsReporter.incrementFailed()
+                }
             }
         } catch (e: Exception) {
             when (e) {
@@ -107,6 +116,7 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+            metricsReporter.incrementFailed()
         }
     }
 
@@ -115,7 +125,6 @@ class PaymentExternalSystemAdapterImpl(
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
-
 }
 
-public fun now() = System.currentTimeMillis()
+fun now() = System.currentTimeMillis()
