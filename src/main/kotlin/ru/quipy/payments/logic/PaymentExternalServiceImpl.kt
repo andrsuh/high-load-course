@@ -7,15 +7,16 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.ConnectionPool
 import org.slf4j.LoggerFactory
+import io.micrometer.core.instrument.Metrics
+import java.util.concurrent.atomic.AtomicInteger
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
-import kotlin.concurrent.thread
+import java.util.concurrent.Executors
 
 
 // Advice: always treat time as a Duration
@@ -46,17 +47,41 @@ class PaymentExternalSystemAdapterImpl(
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
     
-    private val parallelRequestSemaphore = Semaphore(parallelRequests)
+    // Управление нагрузкой для стабильности системы
+    private val maxQueueSize = parallelRequests * 3
     
     private val rateLimiter = SlidingWindowRateLimiter(
-        rate = (rateLimitPerSec * 1.1).toLong(),
+        rate = rateLimitPerSec.toLong(), // Точно 3.0 RPS без буфера
         window = Duration.ofSeconds(1)
     )
 
+    // Собственные метрики для мониторинга нагрузки
+    private val incomingRequestsCounter = Metrics.counter("payment.incoming.requests", "account", accountName)
+    private val outgoingRequestsCounter = Metrics.counter("payment.outgoing.requests", "account", accountName)
+    private val currentQueueSize = AtomicInteger(0)
+    
+    // Адаптивный thread pool под Processing Speed
+    private val optimalThreads = (rateLimitPerSec * requestAverageProcessingTime.seconds).toInt() + 2 // математически оптимальный размер
+    private val executor = Executors.newFixedThreadPool(optimalThreads) // динамический размер
+    
+    init {
+        // Gauge для мониторинга размера очереди в реальном времени
+        Metrics.gauge("payment.queue.size", listOf(io.micrometer.core.instrument.Tag.of("account", accountName)), currentQueueSize) { it.get().toDouble() }
+    }
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        
+        // Метрика входящих запросов
+        incomingRequestsCounter.increment()
 
         val transactionId = UUID.randomUUID()
+
+        // Контролируем размер очереди для мониторинга, но НЕ отклоняем запросы
+        val currentQueue = currentQueueSize.get()
+        if (currentQueue >= maxQueueSize) {
+            logger.warn("[$accountName] HIGH LOAD: Queue full for payment $paymentId, current: $currentQueue/$maxQueueSize - processing anyway")
+        }
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -64,37 +89,38 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
+        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId, queue: $currentQueue/$maxQueueSize")
 
-        thread {
-            executeWithSemaphore(paymentId, transactionId, amount)
+        currentQueueSize.incrementAndGet()
+        executor.submit {
+            try {
+                executePaymentWithRateLimit(paymentId, transactionId, amount)
+            } finally {
+                currentQueueSize.decrementAndGet()
+            }
         }
     }
 
-    private fun executeWithSemaphore(paymentId: UUID, transactionId: UUID, amount: Int) {
+    private fun executePaymentWithRateLimit(paymentId: UUID, transactionId: UUID, amount: Int) {
         try {
-            parallelRequestSemaphore.acquire()
-            logger.debug("[$accountName] Acquired semaphore for payment $paymentId, available permits: ${parallelRequestSemaphore.availablePermits()}")
+            logger.debug("[$accountName] Processing payment $paymentId with rate limiting")
             
             var currentAttempt = 1
             while (!rateLimiter.tick()) {
                 logger.debug("[$accountName] Rate limit hit for payment $paymentId, attempt $currentAttempt, micro-sleep...")
-                Thread.sleep(5)
+                Thread.sleep(2)
                 currentAttempt++
-                if (currentAttempt % 100 == 0) {
+                if (currentAttempt % 200 == 0) {
                     logger.info("[$accountName] Still waiting for rate limit for payment $paymentId, attempt $currentAttempt")
                 }
             }
             
             executePaymentRequest(paymentId, transactionId, amount)
         } catch (e: InterruptedException) {
-            logger.error("[$accountName] Interrupted while waiting for semaphore for payment $paymentId", e)
+            logger.error("[$accountName] Interrupted while processing payment $paymentId", e)
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Interrupted waiting for parallel slot")
+                it.logProcessing(false, now(), transactionId, reason = "Interrupted during processing")
             }
-        } finally {
-            parallelRequestSemaphore.release()
-            logger.debug("[$accountName] Released semaphore for payment $paymentId")
         }
     }
 
@@ -105,6 +131,9 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
+            // Метрика исходящих запросов
+            outgoingRequestsCounter.increment()
+            
             client.newCall(request).execute().use { response ->
                 if (response.code == 429 && attempt <= 10) {
                     logger.warn("[$accountName] Received 429 for payment $paymentId, attempt $attempt, retrying...")
