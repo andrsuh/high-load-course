@@ -49,9 +49,16 @@ class PaymentExternalSystemAdapterImpl(
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
+        val remainingTime = (deadline - now()) / 2
 
         try {
-            semaphore.acquire()
+            if (!semaphore.tryAcquire(remainingTime, TimeUnit.MILLISECONDS)) {
+                logger.warn("[$accountName] Rejecting payment $paymentId: parallel requests limit reached")
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Parallel requests limit reached")
+                }
+                return
+            }
 
             rateLimiter.tickBlocking()
 
