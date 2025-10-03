@@ -1,4 +1,6 @@
 ### КЕЙС 2: Тест для аккаунта acc-5
+### ⚠️  ВАЖНО: ПЕРЕД ЗАПУСКОМ ТЕСТА ЗАПУСТИТЕ ПРИЛОЖЕНИЕ С АККАУНТОМ acc-5:
+### export PAYMENT_ACCOUNTS=acc-5 && mvn spring-boot:run
 POST http://localhost:1234/test/run
 Content-Type: application/json
 

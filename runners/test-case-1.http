@@ -1,4 +1,6 @@
-### Run test locally
+### КЕЙС 1: Тест для аккаунта acc-3
+### ⚠️  ВАЖНО: ПЕРЕД ЗАПУСКОМ ТЕСТА ЗАПУСТИТЕ ПРИЛОЖЕНИЕ С АККАУНТОМ acc-3:
+### export PAYMENT_ACCOUNTS=acc-3 && mvn spring-boot:run
 POST http://localhost:1234/test/run
 Content-Type: application/json
 
