@@ -1,5 +1,7 @@
 package ru.quipy.orders.subscribers
 
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -15,9 +17,16 @@ import ru.quipy.streams.annotation.RetryFailedStrategy
 import java.time.Duration
 
 @Service
-class PaymentSubscriber {
+class PaymentSubscriber(private val meterRegistry: MeterRegistry) {
 
     val logger: Logger = LoggerFactory.getLogger(PaymentSubscriber::class.java)
+
+    val paymentSucceededCounter = Counter
+        .builder("payments_succeeded")
+        .tag("payment count", "time")
+        .register(meterRegistry)
+
+
 
 
     @Autowired
@@ -42,6 +51,7 @@ class PaymentSubscriber {
                             ).toSeconds()
                         }, spent in queue: ${event.spentInQueueDuration.toSeconds()}"
                     )
+                    paymentSucceededCounter.increment()
                 }
             }
         }
