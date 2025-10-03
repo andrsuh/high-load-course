@@ -1,58 +1,11 @@
-# Template for the HighLoad course
-This project is based on [Tiny Event Sourcing library](https://github.com/andrsuh/tiny-event-sourcing)
-
-### Run PostgreSql
-This example uses Postgres as an implementation of the Event store. You can see it in `pom.xml`:
-
-```
-<dependency>
-    <groupId>ru.quipy</groupId>
-    <artifactId>tiny-postgres-event-store-spring-boot-starter</artifactId>
-    <version>${tiny.es.version}</version>
-</dependency>
-```
-
-Thus, you have to run Postgres in order to test this example. Postgres service is included in  `docker-compose` file that we have in the root of the project.
-
-# More comprehensive information about the course, project, how to run tests is here:
-
-https://andrsuh.notion.site/2595d535059281d8a815c2cb3875c376?source=copy_link
-
-https://andrsuh.notion.site/2625d5350592801aaf88c7c95302d10c?source=copy_link
-
-### Run the infrastructure
-Set of the services you need to start developing and testing process is following:
-- Bombardier - service that is in charge of emulation the store's clients activity (creates the incoming load). Also serves as a third-party payment system.
-- Postgres DBMS
-- Prometheus + Grafana - metrics collection and visualization services
-
-You can run all beforementioned services by the following command:
-```
-docker compose -f docker-compose.yml up
-```
-
-### Run the application
-To make the application run you can start the main class `OnlineShopApplication`. It is not being launched as a docker contained to simplify and speed up the devevopment process as it is easier for you to refactor the application and re-run it immediately in the IDE.
+<img width="2216" height="1040" alt="image" src="https://github.com/user-attachments/assets/749925f6-518a-4647-abd5-98d25b96197e" />
+<img width="2253" height="530" alt="image" src="https://github.com/user-attachments/assets/d9b4dfa9-16a3-4490-af0b-61cac70d4e97" />
 
 
-### If you want to pull changes from the main repository into your fork
 
-The command ```git remote -v``` should include the following lines:
+после 
 
-```
-upstream        https://github.com/andrsuh/high-load-course.git (fetch)
-upstream        https://github.com/andrsuh/high-load-course.git (push)
-```
+<img width="2157" height="1051" alt="image" src="https://github.com/user-attachments/assets/ad78b03b-b767-4e93-a3c3-7bd6cacaa5e9" />
+<img width="2055" height="1026" alt="image" src="https://github.com/user-attachments/assets/61445360-90b7-4eb2-963b-7d33c74d218b" />
 
-If not, add the upstream remote:
-```git remote add upstream https://github.com/andrsuh/high-load-course.git```
-
-To pull changes from the main repository, run the following commands:
-
-```
-git fetch upstream
-# switch to the main branch of your fork. Make sure the branch has no uncommitted changes to avoid conflicts
-git checkout main 
-# merge changes from the main repository into your main branch
-git merge upstream/main 
-```
+<img width="1881" height="795" alt="image" src="https://github.com/user-attachments/assets/28d4fb48-844c-4497-b347-751ed347bb49" />
