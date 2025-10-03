@@ -13,7 +13,9 @@ import ru.quipy.common.utils.SlidingWindowRateLimiter
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 
 // Advice: always treat time as a Duration
@@ -39,10 +41,12 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder()
         .connectionPool(ConnectionPool(100, 5, TimeUnit.MINUTES))
-        .connectTimeout(1000, TimeUnit.MILLISECONDS)
-        .readTimeout(3000, TimeUnit.MILLISECONDS)
-        .writeTimeout(1000, TimeUnit.MILLISECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
         .build()
+    
+    private val parallelRequestSemaphore = Semaphore(parallelRequests)
     
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = (rateLimitPerSec * 1.1).toLong(),
@@ -62,20 +66,39 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        executeWithRetry(paymentId, transactionId, amount)
+        thread {
+            executeWithSemaphore(paymentId, transactionId, amount)
+        }
     }
 
-    private fun executeWithRetry(paymentId: UUID, transactionId: UUID, amount: Int, attempt: Int = 1) {
-        var currentAttempt = attempt
-        while (!rateLimiter.tick()) {
-            logger.debug("[$accountName] Rate limit hit for payment $paymentId, attempt $currentAttempt, micro-sleep...")
-            Thread.sleep(5)
-            currentAttempt++
-            if (currentAttempt % 100 == 0) {
-                logger.info("[$accountName] Still waiting for rate limit for payment $paymentId, attempt $currentAttempt")
+    private fun executeWithSemaphore(paymentId: UUID, transactionId: UUID, amount: Int) {
+        try {
+            parallelRequestSemaphore.acquire()
+            logger.debug("[$accountName] Acquired semaphore for payment $paymentId, available permits: ${parallelRequestSemaphore.availablePermits()}")
+            
+            var currentAttempt = 1
+            while (!rateLimiter.tick()) {
+                logger.debug("[$accountName] Rate limit hit for payment $paymentId, attempt $currentAttempt, micro-sleep...")
+                Thread.sleep(5)
+                currentAttempt++
+                if (currentAttempt % 100 == 0) {
+                    logger.info("[$accountName] Still waiting for rate limit for payment $paymentId, attempt $currentAttempt")
+                }
             }
+            
+            executePaymentRequest(paymentId, transactionId, amount)
+        } catch (e: InterruptedException) {
+            logger.error("[$accountName] Interrupted while waiting for semaphore for payment $paymentId", e)
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Interrupted waiting for parallel slot")
+            }
+        } finally {
+            parallelRequestSemaphore.release()
+            logger.debug("[$accountName] Released semaphore for payment $paymentId")
         }
+    }
 
+    private fun executePaymentRequest(paymentId: UUID, transactionId: UUID, amount: Int, attempt: Int = 1) {
         try {
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
@@ -86,14 +109,14 @@ class PaymentExternalSystemAdapterImpl(
                 if (response.code == 429 && attempt <= 10) {
                     logger.warn("[$accountName] Received 429 for payment $paymentId, attempt $attempt, retrying...")
                     Thread.sleep(20)
-                    executeWithRetry(paymentId, transactionId, amount, attempt + 1)
+                    executePaymentRequest(paymentId, transactionId, amount, attempt + 1)
                     return
                 }
                 
                 if (!response.isSuccessful && attempt <= 3) {
                     logger.warn("[$accountName] Non-successful response ${response.code} for payment $paymentId, attempt $attempt, retrying...")
                     Thread.sleep(50)
-                    executeWithRetry(paymentId, transactionId, amount, attempt + 1)
+                    executePaymentRequest(paymentId, transactionId, amount, attempt + 1)
                     return
                 }
 
@@ -119,7 +142,7 @@ class PaymentExternalSystemAdapterImpl(
                         logger.warn("[$accountName] Timeout for payment $paymentId, attempt $attempt, retrying...")
                         val delayMs = minOf(25 + (attempt * 10), 80).toLong()
                         Thread.sleep(delayMs)
-                        executeWithRetry(paymentId, transactionId, amount, attempt + 1)
+                        executePaymentRequest(paymentId, transactionId, amount, attempt + 1)
                         return
                     }
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId after $attempt attempts", e)
