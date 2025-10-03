@@ -12,6 +12,8 @@ import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlin.math.max
+import kotlin.math.min
 
 class SlidingWindowRateLimiter(
     private val rate: Long,
@@ -34,8 +36,21 @@ class SlidingWindowRateLimiter(
     }
 
     fun tickBlocking() {
-        while (!tick()) {
-            Thread.sleep(10)
+        while (true) {
+            if (tick()) return
+
+            val head = queue.peek()
+            val winStart = System.currentTimeMillis() - window.toMillis()
+
+            val sleepMs = when {
+
+                head == null -> 1
+                head.timestamp > winStart -> (head.timestamp - winStart)
+
+                else -> 1
+            }
+
+            Thread.sleep(min(50, max(1, sleepMs)))
         }
     }
 

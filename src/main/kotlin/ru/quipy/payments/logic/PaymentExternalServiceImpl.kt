@@ -54,9 +54,22 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        windowControl.acquire()
+        var windowAcquired = false
+
         try {
-            rateLimiter.tickBlocking()
+
+            while (true) {
+                windowControl.acquire()
+                windowAcquired = true
+                if (rateLimiter.tick()) {
+                    break
+                } else {
+                    windowControl.release()
+                    windowAcquired = false
+                    rateLimiter.tickBlocking()
+                }
+            }
+
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
@@ -67,7 +80,7 @@ class PaymentExternalSystemAdapterImpl(
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
@@ -96,9 +109,13 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } finally {
-            windowControl.release()
+            if (windowAcquired) {
+                windowControl.release()
+            }
         }
     }
+
+
 
     override fun price() = properties.price
 
