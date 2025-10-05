@@ -16,8 +16,9 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @Service
-class OrderPayer(registry: MeterRegistry) {
-
+class OrderPayer(
+    private val registry: MeterRegistry,
+) {
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
     }
@@ -28,14 +29,14 @@ class OrderPayer(registry: MeterRegistry) {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(8_000)
+    private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(16_000)
     private val gauge = Gauge.builder("queue.size", linkedBlockingQueue) { it.size.toDouble() }.register(registry)
 
     private val paymentExecutor = ThreadPoolExecutor(
         16,
-        16,
-        0L,
-        TimeUnit.MILLISECONDS,
+        32,
+        60L,
+        TimeUnit.SECONDS,
         linkedBlockingQueue,
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
@@ -52,7 +53,6 @@ class OrderPayer(registry: MeterRegistry) {
                 )
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
-
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
         return createdAt
