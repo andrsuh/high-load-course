@@ -17,3 +17,31 @@ Content-Type: application/json
 ### Stop running test to save credits
 # @timeout 120
 POST http://77.234.215.138:31234/test/stop/{{serviceName}}
+
+### CASE 2
+POST http://77.234.215.138:34321/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 2,
+  "branch": "hw-02",
+  "testCount": 100,
+  "accounts": "acc-5",
+  "processingTimeMillis": 60000
+}
+
+### CASE 3
+POST http://77.234.215.138:34321/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 2,
+  "testCount": 500,
+  "accounts": "acc-5",
+  "processingTimeMillis": 60000,
+  "branch": "hw-03"
+}

@@ -7,9 +7,64 @@ Content-Type: application/json
   "token": "{{token}}",
   "ratePerSecond": 1,
   "testCount": 100,
-  "processingTimeMillis": 80000
+  "processingTimeMillis": 80000,
+  "accounts": "acc-3"
 }
 
 ### Stop running test to save time and resources
 # @timeout 120
 POST http://localhost:1234/test/stop/{{serviceName}}
+
+
+### Case 1
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 11,
+  "testCount": 1200,
+  "accounts": "acc-3"
+}
+
+### CASE 2
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 2,
+  "testCount": 100,
+  "accounts": "acc-5",
+  "processingTimeMillis": 60000
+}
+
+
+### CASE 3
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 2,
+  "testCount": 500,
+  "accounts": "acc-5",
+  "processingTimeMillis": 60000
+}
+
+
+### CASE 4
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 16,
+  "testCount": 1600,
+  "processingTimeMillis": 30000,
+  "accounts": "acc-23"
+}
