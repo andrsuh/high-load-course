@@ -13,7 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -63,7 +63,8 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    private val rateLimiter = SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong() - 1, window = Duration.ofSeconds(1))
+    private val rateLimiter =
+        LeakingBucketRateLimiter(rate = rateLimitPerSec.toLong() - 1, window = Duration.ofSeconds(1), bucketSize = 50)
     private val semaphore = Semaphore(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -82,6 +83,14 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         CoroutineScope(Dispatchers.IO).launch {
+            if (!rateLimiter.tick()) {
+                logger.warn("[$accountName] Rate limit exceeded. Rejecting request for $paymentId")
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Rate limit exceeded")
+                }
+                incomingFinishedReqCounted.increment()
+                return@launch
+            }
             semaphore.acquire()
 
             try {
@@ -91,7 +100,6 @@ class PaymentExternalSystemAdapterImpl(
                     post(emptyBody)
                 }.build()
 
-                rateLimiter.tickBlocking()
 
                 client.newCall(request).execute().use { response ->
                     val body = try {
