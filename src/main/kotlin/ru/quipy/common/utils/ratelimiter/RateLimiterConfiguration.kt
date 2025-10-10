@@ -18,7 +18,6 @@ class RateLimiterConfiguration {
                 when (it.key) {
                     "acc-3" -> SlidingWindowRateLimiter(it.value.rateLimitPerSec.toLong(), Duration.ofSeconds(1))
                     "acc-5" -> SlidingWindowRateLimiter(it.value.rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-                    "acc-23" -> SlidingWindowRateLimiter(it.value.rateLimitPerSec.toLong(), Duration.ofSeconds(1))
                     else -> null
                 }
             }
