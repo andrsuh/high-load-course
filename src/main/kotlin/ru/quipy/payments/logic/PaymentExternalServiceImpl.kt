@@ -60,7 +60,9 @@ class PaymentExternalSystemAdapterImpl(
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val queue = PriorityBlockingQueue<PaymentRequest>(parallelRequests)
+    private val maxQueueSize = 5000
+    private val queue = PriorityBlockingQueue<PaymentRequest>(maxQueueSize)
+
     private val outgoingRateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1L))
     private val inFlightRequests = AtomicInteger(0)
 
@@ -69,17 +71,47 @@ class PaymentExternalSystemAdapterImpl(
         .tag("accountName", accountName)
         .register(Metrics.globalRegistry)
 
-    override fun canAcceptPayment(deadline: Long): Boolean {
-        val ownRps = rateLimitPerSec.toDouble()
-        val providerRps = 1 / requestAverageProcessingTime.toSeconds().toDouble() * rateLimitPerSec.toDouble()
+    private val backPressureGauge = Gauge.builder("payment_backpressure_ratio") {
+        (queue.size.toDouble() / maxQueueSize.toDouble()).coerceIn(0.0, 1.0)
+    }
+        .description("Current back pressure level [0..1]")
+        .tag("accountName", accountName)
+        .register(Metrics.globalRegistry)
 
-        val bestRps = min(ownRps, providerRps)
-        return deadline.toDouble() >= now().toDouble() + (queue.size + 1).toDouble() / bestRps * 1000
+
+    override fun canAcceptPayment(deadline: Long): Boolean {
+        val estimatedWaitMs = (queue.size / rateLimitPerSec.toDouble()) * 1000
+        val willCompleteAt = now() + estimatedWaitMs + requestAverageProcessingTime.toMillis()
+
+        val canMeetDeadline = willCompleteAt < deadline
+        val queueOk = queue.size < maxQueueSize
+
+        return canMeetDeadline && queueOk
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        queue.add(PaymentRequest(deadline) { executePayment(paymentId, amount, paymentStartedAt, deadline) })
+        if (!canAcceptPayment(deadline)) {
+            logger.warn("[$accountName] Cannot accept payment $paymentId — back pressure: queue full or deadline too close")
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), UUID.randomUUID(), reason = "Rejected due to back pressure or deadline.")
+            }
+            return
+        }
+
+        val paymentRequest = PaymentRequest(deadline) {
+            executePayment(paymentId, amount, paymentStartedAt, deadline)
+        }
+
+        val accepted = queue.offer(paymentRequest)
+        if (!accepted) {
+            logger.error("[$accountName] Queue overflow! Rejecting payment $paymentId")
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), UUID.randomUUID(), reason = "Queue overflow (back pressure).")
+            }
+            return
+        }
     }
+
 
     fun executePayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -162,31 +194,31 @@ class PaymentExternalSystemAdapterImpl(
     override fun name() = properties.accountName
 
     private fun pollQueue() {
-        val paymentRequest = queue.poll()
-
-        if (paymentRequest === null) {
-            return
-        }
+        val paymentRequest = queue.poll() ?: return
 
         if (inFlightRequests.incrementAndGet() > parallelRequests) {
             inFlightRequests.decrementAndGet()
             queue.add(paymentRequest)
-
+            Thread.sleep(5)
             return
         }
 
         if (!outgoingRateLimiter.tick()) {
             inFlightRequests.decrementAndGet()
             queue.add(paymentRequest)
-
+            Thread.sleep(10)
             return
         }
 
         paymentExecutor.submit {
-            paymentRequest.call.run()
-            inFlightRequests.decrementAndGet()
+            try {
+                paymentRequest.call.run()
+            } finally {
+                inFlightRequests.decrementAndGet()
+            }
         }
     }
+
 
     private val releaseJob = scheduledExecutorScope.launch {
         while (true) {
