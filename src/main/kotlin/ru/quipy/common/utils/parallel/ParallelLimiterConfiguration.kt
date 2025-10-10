@@ -16,6 +16,7 @@ class ParallelLimiterConfiguration {
             .mapValues {
                 when (it.key) {
                     "acc-5" -> SemaphoreParallelLimiter(it.value.parallelRequests)
+                    "acc-23" -> SemaphoreParallelLimiter(it.value.parallelRequests)
                     else -> null
                 }
             }
