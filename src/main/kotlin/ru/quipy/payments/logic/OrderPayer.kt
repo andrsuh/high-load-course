@@ -1,7 +1,6 @@
 package ru.quipy.payments.logic
 
 import io.micrometer.core.instrument.Counter
-import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Metrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -29,8 +28,8 @@ class OrderPayer(
     private val parallelLimiter: Semaphore,
 ) {
 
-    private val counterInc: Counter = Metrics.counter("queue.in", "account", "acc-5")
-    private val counterDec: Counter = Metrics.counter("queue.out", "account", "acc-5")
+    private val paymentProcessingStartedCounter: Counter = Metrics.counter("payment.processing.started", "accountName", accountProperties.accountName)
+    private val paymentProcessingCompletedCounter: Counter = Metrics.counter("payment.processing.completed", "accountName", accountProperties.accountName)
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -66,7 +65,7 @@ class OrderPayer(
             }
 
             paymentExecutor.submit {
-                counterInc.increment()
+                paymentProcessingStartedCounter.increment()
                 try {
                     val createdEvent = paymentESService.create {
                         it.create(paymentId, orderId, amount)
@@ -75,7 +74,7 @@ class OrderPayer(
                     paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
                 } finally {
                     parallelLimiter.release()
-                    counterDec.increment()
+                    paymentProcessingCompletedCounter.increment()
                 }
             }
             createdAt
