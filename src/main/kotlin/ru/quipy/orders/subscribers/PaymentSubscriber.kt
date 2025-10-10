@@ -1,7 +1,5 @@
 package ru.quipy.orders.subscribers
 
-import io.micrometer.core.instrument.Counter
-import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
