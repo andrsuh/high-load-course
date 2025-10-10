@@ -80,13 +80,7 @@ class PaymentExternalSystemAdapterImpl(
 
 
     override fun canAcceptPayment(deadline: Long): Boolean {
-        val estimatedWaitMs = (queue.size / rateLimitPerSec.toDouble()) * 1000
-        val willCompleteAt = now() + estimatedWaitMs + requestAverageProcessingTime.toMillis()
-
-        val canMeetDeadline = willCompleteAt < deadline
-        val queueOk = queue.size < maxQueueSize
-
-        return canMeetDeadline && queueOk
+        return true
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
