@@ -10,7 +10,10 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.ratelimiter.SlidingWindowRateLimiter
@@ -21,7 +24,6 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.random.Random
 
@@ -37,7 +39,7 @@ class PaymentExternalSystemAdapterImpl(
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
 
-        val emptyBody = RequestBody.create(null, ByteArray(0))
+        val emptyBody = ByteArray(0).toRequestBody(null)
         val mapper = ObjectMapper().registerKotlinModule()
     }
 
@@ -80,16 +82,23 @@ class PaymentExternalSystemAdapterImpl(
 
 
     override fun canAcceptPayment(deadline: Long): Boolean {
-        return true
+        val estimatedWaitMs = (queue.size / rateLimitPerSec.toDouble()) * 1000
+        val willCompleteAt = now() + estimatedWaitMs + requestAverageProcessingTime.toMillis()
+
+        val canMeetDeadline = willCompleteAt < deadline
+        val queueOk = queue.size < maxQueueSize
+
+        return canMeetDeadline && queueOk
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         if (!canAcceptPayment(deadline)) {
-            logger.warn("[$accountName] Cannot accept payment $paymentId — back pressure: queue full or deadline too close")
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), UUID.randomUUID(), reason = "Rejected due to back pressure or deadline.")
+            throw ResponseStatusException(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "All payment accounts are under back pressure. Try again later."
+            ).also {
+                it.headers.add("Retry-After", "2")
             }
-            return
         }
 
         val paymentRequest = PaymentRequest(deadline) {
@@ -102,7 +111,12 @@ class PaymentExternalSystemAdapterImpl(
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), UUID.randomUUID(), reason = "Queue overflow (back pressure).")
             }
-            return
+            throw ResponseStatusException(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "All payment accounts are under back pressure. Try again later."
+            ).also {
+                it.headers.add("Retry-After", "2")
+            }
         }
     }
 

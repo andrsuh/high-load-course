@@ -3,7 +3,9 @@ package ru.quipy.payments.logic
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.web.server.ResponseStatusException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
@@ -21,7 +23,12 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         if (!paymentService.canAcceptPayment(deadline)) {
-            throw IllegalStateException("Payment service can't accept a new payment")
+            throw ResponseStatusException(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "All payment accounts are under back pressure. Try again later."
+            ).also {
+                it.headers.add("Retry-After", "2")
+            }
         }
 
         val createdAt = System.currentTimeMillis()
@@ -32,7 +39,7 @@ class OrderPayer {
                 amount
             )
         }
-        logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+        logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
 
         paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         return createdAt

@@ -20,12 +20,6 @@ class PaymentSystemImpl(
     }
 
     override fun canAcceptPayment(deadline: Long): Boolean {
-        for (account in paymentAccounts) {
-            if (account.canAcceptPayment(deadline)) {
-                return true
-            }
-        }
-
-        return false
+        return paymentAccounts.any { it.canAcceptPayment(deadline) }
     }
 }
