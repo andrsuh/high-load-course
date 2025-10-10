@@ -199,14 +199,12 @@ class PaymentExternalSystemAdapterImpl(
         if (inFlightRequests.incrementAndGet() > parallelRequests) {
             inFlightRequests.decrementAndGet()
             queue.add(paymentRequest)
-            Thread.sleep(5)
             return
         }
 
         if (!outgoingRateLimiter.tick()) {
             inFlightRequests.decrementAndGet()
             queue.add(paymentRequest)
-            Thread.sleep(10)
             return
         }
 
