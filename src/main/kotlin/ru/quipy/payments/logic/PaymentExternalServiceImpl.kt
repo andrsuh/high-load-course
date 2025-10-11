@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -22,6 +24,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    meterRegistry: MeterRegistry
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -37,6 +40,27 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
+    private val incomingRequestsCounter: Counter = Counter
+        .builder("incoming.requests")
+        .description("Количество завершенных входящих запросов")
+        .tags("account", properties.accountName)
+        .register(meterRegistry)
+    private val incomingFinishedRequestsCounter: Counter = Counter
+        .builder("incoming.finished.requests")
+        .description("Количество завершенных входящих запросов")
+        .tags("account", properties.accountName)
+        .register(meterRegistry)
+    private val outgoingRequestsCounter: Counter = Counter
+        .builder("outgoing.requests")
+        .description("Количество исходящих запросов")
+        .tags("account", properties.accountName)
+        .register(meterRegistry)
+    private val outgoingFinishedRequestsCounter: Counter = Counter
+        .builder("outgoing.finished.requests")
+        .description("Количество завершенных исходящих запросов")
+        .tags("account", properties.accountName)
+        .register(meterRegistry)
+
     private val client = OkHttpClient.Builder()
         .readTimeout(requestAverageProcessingTime.plusSeconds(10).toMillis(), TimeUnit.MILLISECONDS)
         .build()
@@ -48,6 +72,7 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         val transactionId = UUID.randomUUID()
+        incomingRequestsCounter.increment()
 
         // сначала входим в окно (in-flight лимит)
         val remainingBeforeWindow = maxOf(0, deadline - System.currentTimeMillis())
@@ -80,6 +105,7 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
+            outgoingRequestsCounter.increment()
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
@@ -127,6 +153,8 @@ class PaymentExternalSystemAdapterImpl(
         }
         finally {
             ong.release()
+            incomingFinishedRequestsCounter.increment()
+            outgoingFinishedRequestsCounter.increment()
             // освобождаем слот семафора
         }
     }
