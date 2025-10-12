@@ -61,4 +61,6 @@ class OrderPayer {
         }
         return createdAt
     }
+
+    fun getMaxRateLimit() = paymentService.getMaxRateLimit()
 }

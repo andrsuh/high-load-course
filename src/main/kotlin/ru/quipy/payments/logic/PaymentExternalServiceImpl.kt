@@ -14,7 +14,6 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -36,7 +35,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
-    private val requestAverageProcessingTime = properties.averageProcessingTime
+    private val requestAverageProcessingTime = properties.averageProcessingTime.toMillis()
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
@@ -44,7 +43,7 @@ class PaymentExternalSystemAdapterImpl(
 
     // Кейс 3 Если поставить окно больше, например 14, будет лететь parallel_request_limit_breached, но он почему-то не считает
     // их за неукспешное выпольнение, и тогда будет 90 процентов успеха и нормальный income. Но мы так делать не будем - это неправильно
-    private val ongoingWindow = OngoingWindow(parallelRequests)
+    private val ongoingWindow = OngoingWindow(parallelRequests, true)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -60,26 +59,23 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-        if (!ongoingWindow.acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
+        if (now() + requestAverageProcessingTime > deadline) {
             metricsCollector.failedRequestInc(accountName)
-            logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId)
+                it.logProcessing(success = false, now(), transactionId = transactionId, reason = "timeout")
             }
 
             return
         }
 
         try {
-            if (!rateLimiter.tickBlocking(
-                    deadline - now() - requestAverageProcessingTime.toMillis(),
-                    TimeUnit.MILLISECONDS
-                )
-            ) {
+            ongoingWindow.acquire()
+            rateLimiter.tickBlocking()
+
+            if (now() + requestAverageProcessingTime > deadline) {
                 metricsCollector.failedRequestInc(accountName)
-                logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
                 paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId)
+                    it.logProcessing(success = false, now(), transactionId = transactionId, reason = "timeout")
                 }
 
                 return
@@ -141,6 +137,8 @@ class PaymentExternalSystemAdapterImpl(
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
+
+    override fun maxRateLimit() = properties.rateLimitPerSec
 }
 
 public fun now() = System.currentTimeMillis()
