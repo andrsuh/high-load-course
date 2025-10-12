@@ -2,7 +2,9 @@ package ru.quipy.metrics
 
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Metrics
+import io.micrometer.core.instrument.Gauge
 import org.springframework.stereotype.Component
+import java.util.concurrent.LinkedBlockingQueue
 
 @Component
 class MetricsCollector {
@@ -39,5 +41,11 @@ class MetricsCollector {
             .tags("account", account)
             .register(Metrics.globalRegistry)
             .increment()
+    }
+
+    fun requestsQueueSizeRegister(linkedBlockingQueue: LinkedBlockingQueue<Runnable>) {
+        Gauge
+            .builder("queue_size", linkedBlockingQueue) { it.size.toDouble() }
+                .register(Metrics.globalRegistry)
     }
 }
