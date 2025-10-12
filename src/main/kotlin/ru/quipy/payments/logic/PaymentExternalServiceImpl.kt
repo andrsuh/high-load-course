@@ -41,6 +41,7 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+
     // Кейс 3 Если поставить окно больше, например 14, будет лететь parallel_request_limit_breached, но он почему-то не считает
     // их за неукспешное выпольнение, и тогда будет 90 процентов успеха и нормальный income. Но мы так делать не будем - это неправильно
     private val ongoingWindow = OngoingWindow(parallelRequests)
@@ -60,6 +61,7 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
         if (!ongoingWindow.acquire(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
+            metricsCollector.failedRequestInc(accountName)
             logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId)
@@ -69,8 +71,12 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         try {
-            if (!rateLimiter.tickBlocking(deadline - now() - requestAverageProcessingTime.toMillis(), TimeUnit.MILLISECONDS)) {
-                // сюда ту же метрику таймаута
+            if (!rateLimiter.tickBlocking(
+                    deadline - now() - requestAverageProcessingTime.toMillis(),
+                    TimeUnit.MILLISECONDS
+                )
+            ) {
+                metricsCollector.failedRequestInc(accountName)
                 logger.error("[$accountName] Payment timeout on our side for txId: $transactionId, payment: $paymentId")
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId)
@@ -79,7 +85,6 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
-            metricsCollector.outgoingRequestInc(accountName)
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
@@ -94,6 +99,12 @@ class PaymentExternalSystemAdapterImpl(
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                if (body.result) {
+                    metricsCollector.successfulRequestInc(accountName)
+                }
+                else {
+                    metricsCollector.failedRequestExternalInc(accountName)
+                }
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                 // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
@@ -102,6 +113,8 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } catch (e: Exception) {
+            metricsCollector.failedRequestExternalInc(accountName)
+
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
@@ -118,8 +131,7 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
-        }
-        finally {
+        } finally {
             ongoingWindow.release()
         }
     }

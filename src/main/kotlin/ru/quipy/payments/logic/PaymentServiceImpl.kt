@@ -19,15 +19,16 @@ class PaymentSystemImpl(
     private val paymentAccounts: List<PaymentExternalSystemAdapter>
 ) : PaymentService {
     val metricsCollector = MetricsCollector()
+
     companion object {
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
     }
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        metricsCollector.incomingRequestInc()
+
         for (account in paymentAccounts) {
             account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
-
-            metricsCollector.incomingRequestInc(account.name())
         }
     }
 }
