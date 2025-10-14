@@ -37,6 +37,10 @@ class OrderPayer {
         CallerBlockingRejectedExecutionHandler()
     )
 
+    fun canProceed(): Boolean {
+        return paymentService.canProceed()
+    }
+
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long,metrics: HttpMetrics): Long {
         val createdAt = System.currentTimeMillis()
         paymentExecutor.submit {

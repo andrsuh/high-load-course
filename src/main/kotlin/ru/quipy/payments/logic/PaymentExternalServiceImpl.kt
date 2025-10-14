@@ -42,6 +42,11 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
+    override fun canProceed(): Boolean {
+        if (!rateLimiter.canConsume()) return false
+        return semaphore.availablePermits() > 0
+    }
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 

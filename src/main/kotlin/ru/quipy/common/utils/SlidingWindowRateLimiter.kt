@@ -39,6 +39,8 @@ class SlidingWindowRateLimiter(
         }
     }
 
+    fun canConsume(): Boolean = sum.get() < rate
+
     data class Measure(
         val value: Long,
         val timestamp: Long
