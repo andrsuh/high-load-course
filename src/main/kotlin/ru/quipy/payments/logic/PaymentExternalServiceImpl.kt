@@ -51,7 +51,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val safeRps = safeRps(rateLimitPerSec, DEFAULT_TARGET_UTILIZATION)
+    private val safeRps = safeRps(rateLimitPerSec) //, DEFAULT_TARGET_UTILIZATION)
     private val rateLimiter = makeRateLimiter(accountName, safeRps)
     private val client = OkHttpClient
         .Builder()
