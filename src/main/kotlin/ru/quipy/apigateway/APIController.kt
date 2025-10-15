@@ -5,13 +5,10 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import ru.quipy.common.utils.SlidingWindowRateLimiter
-import ru.quipy.common.utils.FixedWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import java.time.Duration
 import java.util.*
-import java.util.concurrent.TimeUnit
+import org.springframework.http.HttpStatus
 
 @RestController
 class APIController {
@@ -68,8 +65,14 @@ class APIController {
         } ?: throw IllegalArgumentException("No such order $orderId")
 
 
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        return try {
+            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+            ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        } catch (e: OrderPayer.TooManyRequestsException) {
+            ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", e.retryAfterMillis.toString())
+                .build()
+        }
     }
 
     class PaymentSubmissionDto(
