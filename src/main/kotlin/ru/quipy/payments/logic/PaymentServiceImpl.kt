@@ -19,7 +19,8 @@ class PaymentSystemImpl(
         }
     }
 
-    override fun canAcceptPayment(deadline: Long): Boolean {
-        return paymentAccounts.any { it.canAcceptPayment(deadline) }
+    override fun canAcceptPayment(deadline: Long): Pair<Boolean, Long> {
+        val pairs = paymentAccounts.map { it.canAcceptPayment(deadline) }
+        return pairs.firstOrNull { it.first } ?: pairs.first()
     }
 }

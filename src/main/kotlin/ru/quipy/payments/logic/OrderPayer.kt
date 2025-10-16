@@ -22,12 +22,15 @@ class OrderPayer {
     private lateinit var paymentService: PaymentService
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
-        if (!paymentService.canAcceptPayment(deadline)) {
+        val (canAccept, expectedCompletionMillis) = paymentService.canAcceptPayment(deadline)
+        if (!canAccept) {
+            logger.error("429 from OrderPayer")
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
                 "All payment accounts are under back pressure. Try again later."
             ).also {
-                it.headers.add("Retry-After", "2")
+                val delaySeconds = (expectedCompletionMillis - System.currentTimeMillis()) / 1000
+                it.headers.add("Retry-After", "$delaySeconds")
             }
         }
 

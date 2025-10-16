@@ -9,7 +9,7 @@ interface PaymentService {
      */
     fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
 
-    fun canAcceptPayment(deadline: Long): Boolean
+    fun canAcceptPayment(deadline: Long): Pair<Boolean, Long>
 }
 
 /**
@@ -27,7 +27,7 @@ interface PaymentExternalSystemAdapter {
 
     fun isEnabled(): Boolean
 
-    fun canAcceptPayment(deadline: Long): Boolean
+    fun canAcceptPayment(deadline: Long): Pair<Boolean, Long>
 }
 
 /**
