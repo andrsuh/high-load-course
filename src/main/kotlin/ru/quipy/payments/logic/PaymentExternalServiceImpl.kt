@@ -45,6 +45,10 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
+    fun getRateLimitPerSec(): Int {
+        return this.rateLimitPerSec;
+    }
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         paymentExecutor.submit {
             try {
