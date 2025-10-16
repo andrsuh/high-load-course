@@ -11,8 +11,10 @@ import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.dto.Transaction
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.ThreadPoolExecutor
@@ -28,6 +30,7 @@ class OrderPayer(
     private val parallelLimiter: Semaphore,
 ) {
 
+    private val taskQueue: Queue<Transaction>  = ConcurrentLinkedDeque()
     private val paymentProcessingPlannedCounter: Counter = Metrics.counter("payment.processing.planned", "accountName", accountProperties.accountName)
     private val paymentProcessingStartedCounter: Counter = Metrics.counter("payment.processing.started", "accountName", accountProperties.accountName)
     private val paymentProcessingCompletedCounter: Counter = Metrics.counter("payment.processing.completed", "accountName", accountProperties.accountName)
@@ -57,10 +60,10 @@ class OrderPayer(
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-
         paymentProcessingPlannedCounter.increment()
+        taskQueue.add(Transaction(orderId, amount, paymentId, deadline))
         parallelLimiter.acquire()
-
+        val taskParam = taskQueue.remove()
         return try {
             while (!rateLimit.tick()) {
                 Thread.sleep(Random.nextLong(0, 100))
@@ -70,10 +73,10 @@ class OrderPayer(
                 paymentProcessingStartedCounter.increment()
                 try {
                     val createdEvent = paymentESService.create {
-                        it.create(paymentId, orderId, amount)
+                        it.create(taskParam.paymentId, taskParam.orderId, taskParam.amount)
                     }
-                    logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
-                    paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+                    logger.trace("Payment {} for order {} created.", createdEvent.paymentId, taskParam.orderId)
+                    paymentService.submitPaymentRequest(taskParam.paymentId, taskParam.amount, createdAt, taskParam.deadline)
                 } finally {
                     parallelLimiter.release()
                     paymentProcessingCompletedCounter.increment()
