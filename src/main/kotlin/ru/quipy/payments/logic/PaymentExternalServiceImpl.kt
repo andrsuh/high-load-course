@@ -38,8 +38,12 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
+
+class RateLimitExceededException(val retryAfter: Long) : Exception("Rate limit exceeded")
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -85,30 +89,10 @@ class PaymentExternalSystemAdapterImpl(
     private val processingTimer = Timer.builder("payment_processing_time").description("Time taken to process a payment").register(meterRegistry)
     private val fullProcessingTimer = Timer.builder("payment_full_processing_time").description("Time taken to full process payment").register(meterRegistry)
     private val successfulProcessingCounter = Counter.builder("payment_successful_processing_count").description("Number of payments successfully processed").register(meterRegistry)
-    
+
     init {
-        // startQueueProcessing()
         setupMetrics()
     }
-
-    // private fun startQueueProcessing() {
-    //     repeat(parallelRequests) { _ ->
-    //         scope.launch {
-    //             while (true) {
-    //                 val task = paymentQueue.receive()
-    //                 paymentQueueSize.decrementAndGet()
-    //                 if (task.deadlineExpired()) {
-    //                     requestFailuredCounter.increment()
-    //                     logger.warn("[$accountName] Payment request deadline expired for payment ${task.paymentId}, txId: ${task.transactionId}")
-    //                     paymentQueueSize.decrementAndGet()
-    //                     task.sample.stop(fullProcessingTimer)
-    //                     continue
-    //                 }
-    //                 processPaymentTask(task.paymentId, task.amount, task.paymentStartedAt, task.deadline, task.transactionId, task.sample)
-    //             }
-    //         }
-    //     }
-    // }
 
     private val ongoingWindow = NonBlockingOngoingWindow(parallelRequests)
     private val rateLimiterOneSecond = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
@@ -120,6 +104,10 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        if (!rateLimiterOneSecond.tick()) {
+            throw RateLimitExceededException(requestAverageProcessingTime.toSeconds())
+        }
+        
         submissionCounter.increment()
         paymentQueueSize.incrementAndGet()
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -133,16 +121,10 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-        // val task = PaymentTask(paymentId, amount, paymentStartedAt, deadline, transactionId, Timer.start())
-        // scope.launch {
-        //     paymentQueue.send(task)
-        //     paymentQueueSize.incrementAndGet()
-        //     logger.info("[$accountName] Submitted payment request for payment $paymentId")
-        // }
-        runBlocking { processPaymentTask(paymentId, amount, paymentStartedAt, deadline, transactionId, Timer.start()) }
+        processPaymentTask(paymentId, amount, paymentStartedAt, deadline, transactionId, Timer.start())
     }
 
-    private suspend fun processPaymentTask(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, transactionId: UUID, sampleFullProcessing: Timer.Sample) {
+    private fun processPaymentTask(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, transactionId: UUID, sampleFullProcessing: Timer.Sample) {
         val sample = Timer.start()
         logger.info("[$accountName] Processing payment request for payment $paymentId, txId: $transactionId")
         var needToReleaseWindow: Boolean = false
@@ -156,7 +138,6 @@ class PaymentExternalSystemAdapterImpl(
             needToReleaseWindow = true
 
             ongoingWindow.putIntoWindow()
-            while (!rateLimiterOneSecond.tick()) {}
             logger.info("[$accountName] Acquired semaphore and rate limiter for payment $paymentId, txId: $transactionId")
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")

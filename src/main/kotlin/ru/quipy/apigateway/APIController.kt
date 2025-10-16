@@ -6,7 +6,10 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.web.bind.annotation.*
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import ru.quipy.payments.logic.RateLimitExceededException
 import java.util.*
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 
 @RestController
 class APIController {
@@ -55,7 +58,7 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
@@ -63,8 +66,12 @@ class APIController {
         } ?: throw IllegalArgumentException("No such order $orderId")
 
 
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        return PaymentSubmissionDto(createdAt, paymentId)
+        try {
+            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+            return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        } catch (e: RateLimitExceededException) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", e.retryAfter.toString()).build()
+        }
     }
 
     class PaymentSubmissionDto(
