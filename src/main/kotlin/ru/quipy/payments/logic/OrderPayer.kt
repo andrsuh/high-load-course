@@ -14,14 +14,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.dto.Transaction
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.BlockingQueue
-import java.util.concurrent.ConcurrentLinkedDeque
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.PriorityBlockingQueue
-import java.util.concurrent.Semaphore
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
-import kotlin.random.Random
+import java.util.concurrent.*
 
 @Service
 class OrderPayer(
@@ -32,10 +25,14 @@ class OrderPayer(
     private val parallelLimiter: Semaphore,
 ) {
 
-    private val taskQueue: BlockingQueue<Transaction> = PriorityBlockingQueue(11, compareBy<Transaction> { transaction -> transaction.orderId} )
-    private val paymentProcessingPlannedCounter: Counter = Metrics.counter("payment.processing.planned", "accountName", accountProperties.accountName)
-    private val paymentProcessingStartedCounter: Counter = Metrics.counter("payment.processing.started", "accountName", accountProperties.accountName)
-    private val paymentProcessingCompletedCounter: Counter = Metrics.counter("payment.processing.completed", "accountName", accountProperties.accountName)
+    private val taskQueue: BlockingQueue<Transaction> =
+        PriorityBlockingQueue(1800, compareBy<Transaction> { it.deadline })
+    private val paymentProcessingPlannedCounter: Counter =
+        Metrics.counter("payment.processing.planned", "accountName", accountProperties.accountName)
+    private val paymentProcessingStartedCounter: Counter =
+        Metrics.counter("payment.processing.started", "accountName", accountProperties.accountName)
+    private val paymentProcessingCompletedCounter: Counter =
+        Metrics.counter("payment.processing.completed", "accountName", accountProperties.accountName)
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -63,11 +60,11 @@ class OrderPayer(
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
         paymentProcessingPlannedCounter.increment()
-        taskQueue.offer(Transaction(orderId, amount, paymentId, deadline))
+        taskQueue.put(Transaction(orderId, amount, paymentId, deadline))
         parallelLimiter.acquire()
         return try {
             while (!rateLimit.tick()) {
-                Thread.sleep(10)
+                Thread.sleep(Random().nextInt(0,10).toLong())
             }
             val taskParam = taskQueue.poll()
 
@@ -78,9 +75,12 @@ class OrderPayer(
                         it.create(taskParam.paymentId, taskParam.orderId, taskParam.amount)
                     }
                     logger.trace("Payment {} for order {} created.", createdEvent.paymentId, taskParam.orderId)
-                    if (deadline > System.currentTimeMillis()) {
-                        paymentService.submitPaymentRequest(taskParam.paymentId, taskParam.amount, createdAt, taskParam.deadline)
-                    }
+                    paymentService.submitPaymentRequest(
+                        taskParam.paymentId,
+                        taskParam.amount,
+                        createdAt,
+                        taskParam.deadline
+                    )
                 } finally {
                     parallelLimiter.release()
                     paymentProcessingCompletedCounter.increment()
