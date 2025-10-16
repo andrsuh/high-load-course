@@ -26,13 +26,4 @@ class PaymentSystemImpl(
             account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
         }
     }
-
-    override fun canProceed(): Boolean {
-        for (account in paymentAccounts) {
-            if (!account.canProceed()){
-                return false
-            }
-        }
-        return true
-    }
 }
