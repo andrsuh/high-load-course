@@ -38,7 +38,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val limiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
-        window = Duration.ofMillis(1)
+        window = Duration.ofMillis(1000)
     )
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
