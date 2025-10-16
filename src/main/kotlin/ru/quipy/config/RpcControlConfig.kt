@@ -13,7 +13,7 @@ class RpcControlConfig {
 
     @Bean
     fun getSlidingWindowRateLimiter(accountProperties: PaymentAccountProperties) =
-        SlidingWindowRateLimiter(accountProperties.rateLimitPerSec.toLong()-1,
+        SlidingWindowRateLimiter(accountProperties.rateLimitPerSec.toLong(),
             Duration.ofSeconds(1)
         )
 
