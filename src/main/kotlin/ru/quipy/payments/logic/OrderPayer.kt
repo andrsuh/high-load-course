@@ -28,6 +28,7 @@ class OrderPayer(
     private val parallelLimiter: Semaphore,
 ) {
 
+    private val paymentProcessingPlannedCounter: Counter = Metrics.counter("payment.processing.planned", "accountName", accountProperties.accountName)
     private val paymentProcessingStartedCounter: Counter = Metrics.counter("payment.processing.started", "accountName", accountProperties.accountName)
     private val paymentProcessingCompletedCounter: Counter = Metrics.counter("payment.processing.completed", "accountName", accountProperties.accountName)
 
@@ -57,6 +58,7 @@ class OrderPayer(
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
+        paymentProcessingPlannedCounter.increment()
         parallelLimiter.acquire()
 
         return try {
