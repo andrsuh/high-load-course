@@ -2075,7 +2075,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(incoming_requests_total[2m]) - rate(failed_incoming_requests_total[2m])",
+          "expr": "(rate(incoming_requests_total[2m]) - rate(failed_incoming_requests_total[2m])) >= 0",
           "legendFormat": "success incoming requests",
           "range": true,
           "refId": "A"
@@ -2099,7 +2099,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "rate(outgoing_requests_total[2m]) - rate(failed_outgoing_requests_total[2m])",
+          "expr": "(rate(outgoing_requests_total[2m]) - rate(failed_outgoing_requests_total[2m])) >=0",
           "hide": false,
           "instant": false,
           "legendFormat": "success outgoing requests",
