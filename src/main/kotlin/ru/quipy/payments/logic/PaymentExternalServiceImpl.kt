@@ -50,8 +50,26 @@ class PaymentExternalSystemAdapterImpl(
 
         rateLimiter.tickBlocking()
 
+        val currentTime = now()
+        if (currentTime > deadline) {
+            logger.error("[$accountName] Payment $paymentId deadline exceeded. Started: $paymentStartedAt, deadline: $deadline, now: $currentTime")
+            paymentMetrics.failedIncomingRequests()
+
+            paymentESService.update(paymentId) {
+                it.logSubmission(
+                    success = false,
+                    transactionId,
+                    currentTime,
+                    Duration.ofMillis(currentTime - paymentStartedAt),
+                )
+            }
+            ongoingWindow.release()
+            return
+        }
+
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
+        paymentMetrics.outgoingRequests()
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
@@ -68,12 +86,14 @@ class PaymentExternalSystemAdapterImpl(
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    paymentMetrics.failedOutgoingRequests()
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
-                paymentMetrics.successOutgoingRequests()
+                if (!body.result) {
+                    paymentMetrics.failedOutgoingRequests()
+                }
+
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.

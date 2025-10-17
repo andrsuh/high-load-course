@@ -201,7 +201,32 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "E_PAYMENT_TIMEOUT_EXCEEDED"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -2002,7 +2027,9 @@
               "mode": "off"
             }
           },
+          "fieldMinMax": false,
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2048,8 +2075,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(success_requests_total[2m])",
-          "legendFormat": "incoming requests",
+          "expr": "rate(incoming_requests_total[2m]) - rate(failed_incoming_requests_total[2m])",
+          "legendFormat": "success incoming requests",
           "range": true,
           "refId": "A"
         },
@@ -2072,12 +2099,51 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "rate(success_outgoing_requests_total[2m])",
+          "expr": "rate(outgoing_requests_total[2m]) - rate(failed_outgoing_requests_total[2m])",
           "hide": false,
           "instant": false,
           "legendFormat": "success outgoing requests",
           "range": true,
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(incoming_requests_total[2m])",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "incoming requests",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(failed_incoming_requests_total[2m])",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "failed incoming requests",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(outgoing_requests_total[2m])",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "outgoing requests",
+          "range": true,
+          "refId": "F"
         }
       ],
       "title": "requests",
@@ -3659,5 +3725,5 @@
   "timezone": "",
   "title": "Services statistic",
   "uid": "KVr-Vmpnz",
-  "version": 1
+  "version": 4
 }

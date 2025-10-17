@@ -5,11 +5,13 @@ import org.springframework.stereotype.Component
 
 @Component
 class PaymentMetrics(private val registry: MeterRegistry) {
-    private val incomingRequests = registry.counter("success_requests")
+    private val incomingRequests = registry.counter("incoming_requests")
+    private val failedIncomingRequests = registry.counter("failed_incoming_requests")
     private val failedOutgoingRequests = registry.counter("failed_outgoing_requests")
-    private val successOutgoingRequests = registry.counter("success_outgoing_requests")
+    private val outgoingRequests = registry.counter("outgoing_requests")
 
     fun incomingRequests() = incomingRequests.increment()
-    fun successOutgoingRequests() = successOutgoingRequests.increment()
+    fun failedIncomingRequests() = failedIncomingRequests.increment()
+    fun outgoingRequests() = outgoingRequests.increment()
     fun failedOutgoingRequests() = failedOutgoingRequests.increment()
 }
