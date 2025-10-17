@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -41,7 +42,8 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+    private val rateLimiterScope = CoroutineScope(Executors.newFixedThreadPool(128).asCoroutineDispatcher())
+
 
     private val client = OkHttpClient.Builder().build()
 
@@ -52,25 +54,21 @@ class PaymentExternalSystemAdapterImpl(
 
     private val requestQueue = LinkedBlockingDeque<PaymentRequest>()
 
+
     val job = rateLimiterScope.launch {
         while (true) {
-            try {
-                // Берём из головы
-                val req = requestQueue.takeFirst()
-
-                if (limiter.tick()) {
+            val req = requestQueue.takeFirst()
+            if (limiter.tick()) {
+                launch {
                     processPayment(req)
-                } else {
-                    requestQueue.putFirst(req)
                 }
-            } catch (ie: InterruptedException) {
-                Thread.currentThread().interrupt()
-                break
-            } catch (e: Exception) {
-                logger.error("[$accountName] Error in queue processor", e)
+            } else {
+                requestQueue.putFirst(req)
+                delay(10)
             }
         }
     }
+
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Enqueuing payment request for payment $paymentId")
