@@ -1,0 +1,17 @@
+{
+	"ulid": "01K7PZFX532ZY3GBVHEZF47Z7T",
+	"minTime": 1760623238332,
+	"maxTime": 1760630400000,
+	"stats": {
+		"numSamples": 335680,
+		"numSeries": 805,
+		"numChunks": 2415
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01K7PZFX532ZY3GBVHEZF47Z7T"
+		]
+	},
+	"version": 1
+}
