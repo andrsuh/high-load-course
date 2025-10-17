@@ -29,7 +29,7 @@ class OrderPayer{
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(315) 
+    private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(8000) 
 
     val threadQueueCounter: Gauge = Gauge.builder(
         "requests_in_thread_queue_total",
@@ -45,13 +45,17 @@ class OrderPayer{
         TimeUnit.MILLISECONDS,
         linkedBlockingQueue,
         NamedThreadFactory("payment-submission-executor"),
-        ThreadPoolExecutor.AbortPolicy()
+        CallerBlockingRejectedExecutionHandler()
     )
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long,metrics: HttpMetrics): Pair<Long, Boolean> {
+    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long,metrics: HttpMetrics): Triple<Long, Boolean, Long> {
         val createdAt = System.currentTimeMillis()
-        try {
-            paymentExecutor.submit {
+        val timeToProcessAllInQueue = (linkedBlockingQueue.size * 13) * 1000
+        if ((createdAt + timeToProcessAllInQueue ) > deadline)
+        {
+            return Triple(createdAt,false,createdAt + timeToProcessAllInQueue)
+        }
+        paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,
@@ -63,11 +67,7 @@ class OrderPayer{
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
             metrics.responceCounter.increment()
-            }
-        } catch (e: Exception)  {
-            logger.info("Payment ${paymentId} for order $orderId not created", e)
-            return createdAt to false
         }
-        return createdAt to true
+        return Triple(createdAt,true,0)
     }
 }

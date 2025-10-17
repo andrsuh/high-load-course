@@ -19,5 +19,4 @@ class HttpMetrics() {
     val toManyRespCounter = Counter.builder("to_many_responce")
             .description("Total number of to many responce")
             .register(Metrics.globalRegistry)
-
 }

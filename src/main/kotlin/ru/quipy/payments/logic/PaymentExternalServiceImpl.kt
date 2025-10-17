@@ -55,12 +55,7 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        if (deadline < (now()+properties.averageProcessingTime.toMillis())) {
-            logger.error("goodby payment: $paymentId")
-            paymentESService.update(paymentId) {
-                it.logProcessing(success = false, now(), transactionId = transactionId, reason = "deadline")
-            }
-
+        if (checkDeadline(paymentId, transactionId, deadline)){
             return
         }
 
@@ -82,13 +77,7 @@ class PaymentExternalSystemAdapterImpl(
             logger.error("rate limiter пропустил: $paymentId")
             metrics.rateLimiterQueueCount.decrementAndGet()     
 
-            if (deadline < (now()+properties.averageProcessingTime.toMillis())) {
-                logger.error("goodby payment 2: $paymentId")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(success = false, now(), transactionId = transactionId, reason = "deadline")
-                }
-                semaphore.release()
-
+            if (checkDeadline(paymentId, transactionId, deadline)){
                 return
             }
 
@@ -138,6 +127,17 @@ class PaymentExternalSystemAdapterImpl(
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
+
+    fun checkDeadline(paymentId: UUID, transactionId: UUID, deadline: Long)  : Boolean {
+        if (deadline < (now()+properties.averageProcessingTime.toMillis())) {
+            logger.error("goodby payment 2: $paymentId")
+            paymentESService.update(paymentId) {
+                it.logProcessing(success = false, now(), transactionId = transactionId, reason = "deadline")
+            }
+            return true
+        }
+        return false
+    }
 
 }
 
