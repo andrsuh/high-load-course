@@ -42,7 +42,6 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    private val globalLimiter = SlidingWindowRateLimiter(50, Duration.ofSeconds(50))
     private val ongoingWindow = OngoingWindow(parallelRequests)
 
     private val submittedCounter = Counter.builder("payments_submitted_total").register(meterRegistry)
@@ -71,14 +70,6 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        if (!globalLimiter.tick()){
-            logger.error("Too many tasks in queue")
-            rejectedGlobalLimiterCounter.increment()
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Too many tasks in queue")
-            }
-            return
-        }
         ongoingWindow.acquire()
         if (!waitRateLimitOrTimeout(deadline)) {
             logger.error("[$accountName] Rate limit wait exceeded deadline for txId: $transactionId, payment: $paymentId")
