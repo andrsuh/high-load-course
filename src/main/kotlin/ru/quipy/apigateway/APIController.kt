@@ -19,7 +19,7 @@ import java.time.Duration
 class APIController(@Autowired meterRegistry: MeterRegistry) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
-    private val rateLimiter = SlidingWindowRateLimiter(11, Duration.ofSeconds(1))
+    private val rateLimiter = SlidingWindowRateLimiter(320, Duration.ofSeconds(30))
 
     private val orderCounter: Counter = Counter.builder("http_requests_served")
         .description("Count of requests served for payment")
