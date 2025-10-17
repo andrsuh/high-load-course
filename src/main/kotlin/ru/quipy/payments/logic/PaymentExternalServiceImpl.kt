@@ -7,12 +7,15 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Semaphore
+import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.TimeUnit
 
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
@@ -36,23 +39,58 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    private val limiter = SlidingWindowRateLimiter(
-        rate = rateLimitPerSec.toLong(),
-        window = Duration.ofMillis(1000)
+    // Рекомендую использовать неблокирующий токен-ба?кет (вы предоставили реализацию TokenBucketRateLimiter)
+    // Здесь я оставляю поле LIMITER абстрактно — подставь TokenBucketRateLimiter или другой выбранный тобой.
+    private val limiter = TokenBucketRateLimiter(
+        rate = rateLimitPerSec,
+        bucketMaxCapacity = (rateLimitPerSec * 2).coerceAtLeast(1),
+        window = 1,
+        timeUnit = TimeUnit.SECONDS
     )
 
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+    private val requestQueue = LinkedBlockingDeque<PaymentRequest>()
 
-        limiter.tickBlocking()
+    private val executor = Executors.newSingleThreadExecutor()
+
+    init {
+        executor.submit {
+            while (true) {
+                try {
+                    // Берём из головы
+                    val req = requestQueue.takeFirst()
+
+                    if (limiter.tick()) {
+                        processPayment(req)
+                    } else {
+                        requestQueue.putFirst(req)
+                    }
+                } catch (ie: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                } catch (e: Exception) {
+                    logger.error("[$accountName] Error in queue processor", e)
+                }
+            }
+        }
+    }
+
+    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        logger.warn("[$accountName] Enqueuing payment request for payment $paymentId")
+
+        // Добавляем в конец (очередь FIFO). Если хочешь — можно сделать offer со временем ожидания.
+        val paymentRequest = PaymentRequest(paymentId, amount, paymentStartedAt, deadline)
+        requestQueue.offerLast(paymentRequest)
+    }
+
+    private fun processPayment(req: PaymentRequest) {
+        val (paymentId, amount, paymentStartedAt, _) = req
 
         val transactionId = UUID.randomUUID()
-
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
+        logger.info("[$accountName] Processing payment from queue: $paymentId , txId: $transactionId")
 
         try {
             val request = Request.Builder().run {
@@ -94,10 +132,15 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun price() = properties.price
-
     override fun isEnabled() = properties.enabled
-
     override fun name() = properties.accountName
 }
 
-public fun now() = System.currentTimeMillis()
+data class PaymentRequest(
+    val paymentId: UUID,
+    val amount: Int,
+    val paymentStartedAt: Long,
+    val deadline: Long
+)
+
+fun now() = System.currentTimeMillis()
