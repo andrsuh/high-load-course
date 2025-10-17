@@ -39,11 +39,9 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    private val limiter = TokenBucketRateLimiter(
-        rate = rateLimitPerSec,
-        bucketMaxCapacity = (rateLimitPerSec * 200),
-        window = 1,
-        timeUnit = TimeUnit.SECONDS
+    private val limiter = SlidingWindowRateLimiter(
+        rate = rateLimitPerSec.toLong(),
+        window = Duration.ofSeconds(1)
     )
 
     private val requestQueue = LinkedBlockingDeque<PaymentRequest>()
