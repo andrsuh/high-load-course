@@ -39,11 +39,9 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    // Рекомендую использовать неблокирующий токен-ба?кет (вы предоставили реализацию TokenBucketRateLimiter)
-    // Здесь я оставляю поле LIMITER абстрактно — подставь TokenBucketRateLimiter или другой выбранный тобой.
     private val limiter = TokenBucketRateLimiter(
         rate = rateLimitPerSec,
-        bucketMaxCapacity = (rateLimitPerSec * 2).coerceAtLeast(1),
+        bucketMaxCapacity = (rateLimitPerSec * 200),
         window = 1,
         timeUnit = TimeUnit.SECONDS
     )
