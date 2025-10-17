@@ -2,6 +2,9 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -22,6 +25,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -37,6 +41,8 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
+    private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+
     private val client = OkHttpClient.Builder().build()
 
     private val limiter = SlidingWindowRateLimiter(
@@ -46,26 +52,22 @@ class PaymentExternalSystemAdapterImpl(
 
     private val requestQueue = LinkedBlockingDeque<PaymentRequest>()
 
-    private val executor = Executors.newSingleThreadExecutor()
+    val job = rateLimiterScope.launch {
+        while (true) {
+            try {
+                // Берём из головы
+                val req = requestQueue.takeFirst()
 
-    init {
-        executor.submit {
-            while (true) {
-                try {
-                    // Берём из головы
-                    val req = requestQueue.takeFirst()
-
-                    if (limiter.tick()) {
-                        processPayment(req)
-                    } else {
-                        requestQueue.putFirst(req)
-                    }
-                } catch (ie: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    break
-                } catch (e: Exception) {
-                    logger.error("[$accountName] Error in queue processor", e)
+                if (limiter.tick()) {
+                    processPayment(req)
+                } else {
+                    requestQueue.putFirst(req)
                 }
+            } catch (ie: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
+            } catch (e: Exception) {
+                logger.error("[$accountName] Error in queue processor", e)
             }
         }
     }
