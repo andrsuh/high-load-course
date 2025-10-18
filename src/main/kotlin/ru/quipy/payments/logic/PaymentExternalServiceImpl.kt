@@ -2,31 +2,22 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
-import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.LinkedBlockingDeque
-import java.util.concurrent.TimeUnit
 
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -42,51 +33,25 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val rateLimiterScope = CoroutineScope(Executors.newFixedThreadPool(128).asCoroutineDispatcher())
-
-
     private val client = OkHttpClient.Builder().build()
 
     private val limiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
-        window = Duration.ofSeconds(1)
+        window = Duration.ofMillis(1000)
     )
 
-    private val requestQueue = LinkedBlockingDeque<PaymentRequest>()
-
-
-    val job = rateLimiterScope.launch {
-        while (true) {
-            val req = requestQueue.takeFirst()
-            if (limiter.tick()) {
-                launch {
-                    processPayment(req)
-                }
-            } else {
-                requestQueue.putFirst(req)
-                delay(10)
-            }
-        }
-    }
-
-
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        logger.warn("[$accountName] Enqueuing payment request for payment $paymentId")
+        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
-        // Добавляем в конец (очередь FIFO). Если хочешь — можно сделать offer со временем ожидания.
-        val paymentRequest = PaymentRequest(paymentId, amount, paymentStartedAt, deadline)
-        requestQueue.offerLast(paymentRequest)
-    }
-
-    private fun processPayment(req: PaymentRequest) {
-        val (paymentId, amount, paymentStartedAt, _) = req
+        limiter.tickBlocking()
 
         val transactionId = UUID.randomUUID()
+
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        logger.info("[$accountName] Processing payment from queue: $paymentId , txId: $transactionId")
+        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
             val request = Request.Builder().run {
@@ -128,15 +93,10 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun price() = properties.price
+
     override fun isEnabled() = properties.enabled
+
     override fun name() = properties.accountName
 }
 
-data class PaymentRequest(
-    val paymentId: UUID,
-    val amount: Int,
-    val paymentStartedAt: Long,
-    val deadline: Long
-)
-
-fun now() = System.currentTimeMillis()
+public fun now() = System.currentTimeMillis()

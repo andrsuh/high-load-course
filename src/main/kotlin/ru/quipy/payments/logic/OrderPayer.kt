@@ -4,6 +4,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
+import org.testcontainers.shaded.org.bouncycastle.util.Integers
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
@@ -12,6 +13,7 @@ import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration
 
 @Service
 class OrderPayer {
@@ -26,14 +28,17 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val maxQueueLength : Int = 330
+    private val freeSpaceWaitTime : java.time.Duration = java.time.Duration.ofMinutes(0)
+
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(8_000),
+        LinkedBlockingQueue(maxQueueLength),
         NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
+        CallerBlockingRejectedExecutionHandler(freeSpaceWaitTime)
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
