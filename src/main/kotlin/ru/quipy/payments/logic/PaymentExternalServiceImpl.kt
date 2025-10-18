@@ -24,6 +24,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.random.Random
 
@@ -46,8 +47,10 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
-    private val rateLimitPerSec = properties.rateLimitPerSec
+    private val rateLimitPerSec = properties.rateLimitPerSec.toDouble()
     private val parallelRequests = properties.parallelRequests
+    private val parallelLimitPerSec = properties.parallelRequests.toDouble()/properties.averageProcessingTime.toSeconds()
+    private val minimalLimitPerSec = min(rateLimitPerSec, parallelLimitPerSec)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -91,8 +94,9 @@ class PaymentExternalSystemAdapterImpl(
         .register(Metrics.globalRegistry)
 
     override fun canAcceptPayment(deadline: Long): Pair<Boolean, Long> {
-        val estimatedWaitMs = ((queue.size / rateLimitPerSec.toDouble()) + 1) * 1000
-        val willCompleteAt = now() + estimatedWaitMs + requestAverageProcessingTime.toMillis()
+        val estimatedWaitMs = (queue.size / minimalLimitPerSec) * 1000
+        val additionalTimeMs = 1000
+        val willCompleteAt = now() + estimatedWaitMs + additionalTimeMs + requestAverageProcessingTime.toMillis()
 
         val canMeetDeadline = willCompleteAt < deadline
         val queueOk = queue.size < maxQueueSize
@@ -112,7 +116,7 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         val paymentRequest = PaymentRequest(deadline) {
-            executePayment(paymentId, amount, paymentStartedAt, deadline)
+            performPaymentWithRetry(paymentId, amount, paymentStartedAt, deadline)
         }
 
         val accepted = queue.offer(paymentRequest)
@@ -132,7 +136,7 @@ class PaymentExternalSystemAdapterImpl(
     }
 
 
-    fun executePayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    fun performPaymentWithRetry(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -152,7 +156,8 @@ class PaymentExternalSystemAdapterImpl(
             maxRetries = 3,
             baseDelayMillis = 100,
             backoffFactor = 2.0,
-            jitterMillis = 50
+            jitterMillis = 30,
+            avgProcessingTime = requestAverageProcessingTime.toMillis()
         )
 
         var lastError: Exception? = null
@@ -257,34 +262,3 @@ class PaymentExternalSystemAdapterImpl(
 }
 
 public fun now() = System.currentTimeMillis()
-
-data class PaymentRequest(
-    val deadline: Long,
-    val call: Runnable,
-) : Comparable<PaymentRequest> {
-    override fun compareTo(other: PaymentRequest): Int = deadline.compareTo(other.deadline)
-}
-
-class RetryManager(
-    private val maxRetries: Int,
-    private val baseDelayMillis: Long,
-    private val backoffFactor: Double = 2.0,
-    private val jitterMillis: Long = 50L
-) {
-    private var attempt = 0
-
-    fun onFailure() {
-        attempt++
-        val delay = (baseDelayMillis * backoffFactor.pow(attempt.toDouble())).toLong()
-        val jitter = Random.nextLong(0, jitterMillis + 1)
-        val totalDelay = delay + jitter
-
-        Thread.sleep(totalDelay.coerceAtMost(2000))
-    }
-
-    fun shouldRetry(currentTime: Long, deadline: Long): Boolean {
-        if (currentTime >= deadline) return false
-        if (attempt >= maxRetries) return false
-        return true
-    }
-}

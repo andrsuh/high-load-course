@@ -37,3 +37,9 @@ build/
 http-client.private.env.json
 /grafana/data
 /prometheus/data
+
+draft.txt
+
+local_run.sh
+
+server_run.sh

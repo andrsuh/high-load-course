@@ -29,8 +29,10 @@ class OrderPayer {
                 HttpStatus.TOO_MANY_REQUESTS,
                 "All payment accounts are under back pressure. Try again later."
             ).also {
-                val delaySeconds = (expectedCompletionMillis - System.currentTimeMillis()) / 1000
-                it.headers.add("Retry-After", "$delaySeconds")
+                if (expectedCompletionMillis < deadline) {
+                    val delaySeconds = (expectedCompletionMillis - System.currentTimeMillis()) / 1000
+                    it.headers.add("Retry-After", "$delaySeconds")
+                }
             }
         }
 
