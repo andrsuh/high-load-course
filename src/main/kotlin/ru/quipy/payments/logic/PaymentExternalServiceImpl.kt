@@ -25,8 +25,6 @@ import java.util.*
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
-import kotlin.math.pow
-import kotlin.random.Random
 
 
 // Advice: always treat time as a Duration
@@ -106,7 +104,6 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        performPaymentWithRetry(paymentId, amount, paymentStartedAt, deadline)
         val paymentRequest = PaymentRequest(deadline) {
             performPaymentWithRetry(paymentId, amount, paymentStartedAt, deadline)
         }
@@ -138,7 +135,7 @@ class PaymentExternalSystemAdapterImpl(
             val retryTimeMs = 5L
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
-//                retryTimeMs.toString()
+                retryTimeMs.toString()
             )
         }
     }

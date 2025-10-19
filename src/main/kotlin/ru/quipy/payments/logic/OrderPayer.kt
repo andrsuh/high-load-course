@@ -27,9 +27,10 @@ class OrderPayer {
         val (canAccept, estimatedWaitMs) = paymentService.canAcceptPayment(deadline)
         if (!canAccept) {
             logger.error("429 from OrderPayer")
+            val delaySeconds = (estimatedWaitMs - System.currentTimeMillis()) / 1000
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
-//                estimatedWaitMs.toString()
+                delaySeconds.toString()
             )
         }
 
