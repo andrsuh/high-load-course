@@ -54,7 +54,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-    private val scheduledExecutorScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+//    private val scheduledExecutorScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -65,6 +65,7 @@ class PaymentExternalSystemAdapterImpl(
         CallerBlockingRejectedExecutionHandler()
     )
 
+    private val lock = Any()
     private val maxQueueSize = 5000
     private val queue = PriorityBlockingQueue<PaymentRequest>(maxQueueSize)
 
@@ -95,43 +96,50 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun canAcceptPayment(deadline: Long): Pair<Boolean, Long> {
         val estimatedWaitMs = (queue.size / minimalLimitPerSec) * 1000
-        val additionalTimeMs = 1000
+        val additionalTimeMs = 500
         val willCompleteAt = now() + estimatedWaitMs + additionalTimeMs + requestAverageProcessingTime.toMillis()
 
         val canMeetDeadline = willCompleteAt < deadline
         val queueOk = queue.size < maxQueueSize
 
-        return Pair(canMeetDeadline && queueOk, willCompleteAt.toLong())
+        return Pair(canMeetDeadline && queueOk, estimatedWaitMs.toLong())
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        val (canAccept, expectedCompletionMillis) = canAcceptPayment(deadline)
-        if (!canAccept) {
+        performPaymentWithRetry(paymentId, amount, paymentStartedAt, deadline)
+        val paymentRequest = PaymentRequest(deadline) {
+            performPaymentWithRetry(paymentId, amount, paymentStartedAt, deadline)
+        }
+        var canAccept = Pair(true,0L)
+        var accepted = false
+
+        synchronized(lock) {
+            canAccept = canAcceptPayment(deadline)
+            if (canAccept.first) {
+                accepted = queue.offer(paymentRequest)
+            }
+        }
+
+        if (!canAccept.first) {
             logger.error("429 from PaymentExternalSystemAdapterImpl")
-            val delaySeconds = (expectedCompletionMillis - System.currentTimeMillis()) / 1000
+            val delaySeconds = (canAccept.second - System.currentTimeMillis()) / 1000
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
                 delaySeconds.toString(),
             )
         }
 
-        val paymentRequest = PaymentRequest(deadline) {
-            performPaymentWithRetry(paymentId, amount, paymentStartedAt, deadline)
-        }
-
-        val accepted = queue.offer(paymentRequest)
         if (!accepted) {
             logger.error("429 from PaymentExternalSystemAdapterImpl (queue reason)")
             logger.error("[$accountName] Queue overflow! Rejecting payment $paymentId")
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), UUID.randomUUID(), reason = "Queue overflow (back pressure).")
             }
+            val retryTimeMs = 5L
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
-                "All payment accounts are under back pressure. Try again later."
-            ).also {
-                it.headers.add("Retry-After", "5")
-            }
+//                retryTimeMs.toString()
+            )
         }
     }
 
@@ -154,10 +162,9 @@ class PaymentExternalSystemAdapterImpl(
 
         val retryManager = RetryManager(
             maxRetries = 3,
-            baseDelayMillis = 100,
             backoffFactor = 2.0,
-            jitterMillis = 30,
-            avgProcessingTime = requestAverageProcessingTime.toMillis()
+            jitterMillis = 0,
+            avgProcessingTime = (requestAverageProcessingTime.toMillis()*1.05).toLong()
         )
 
         var lastError: Exception? = null
@@ -254,11 +261,11 @@ class PaymentExternalSystemAdapterImpl(
     }
 
 
-    private val releaseJob = scheduledExecutorScope.launch {
-        while (true) {
-            pollQueue()
-        }
-    }
+//    private val releaseJob = scheduledExecutorScope.launch {
+//        while (true) {
+//            pollQueue()
+//        }
+//    }
 }
 
 public fun now() = System.currentTimeMillis()
