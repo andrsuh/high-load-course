@@ -54,7 +54,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
-//    private val scheduledExecutorScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+    private val scheduledExecutorScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -261,11 +261,11 @@ class PaymentExternalSystemAdapterImpl(
     }
 
 
-//    private val releaseJob = scheduledExecutorScope.launch {
-//        while (true) {
-//            pollQueue()
-//        }
-//    }
+    private val releaseJob = scheduledExecutorScope.launch {
+        while (true) {
+            pollQueue()
+        }
+    }
 }
 
 public fun now() = System.currentTimeMillis()
