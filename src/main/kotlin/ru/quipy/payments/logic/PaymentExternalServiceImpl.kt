@@ -56,16 +56,16 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequestSemaphore = Semaphore(optimalThreads)
 
     private val asyncExecutor = ThreadPoolExecutor(
-        optimalThreads,              // core threads = 64 для acc-23
-        optimalThreads * 2,          // max threads = 128
+        optimalThreads,
+        optimalThreads * 2,
         60L,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(500),    // Ограниченная очередь
+        LinkedBlockingQueue(500),
         NamedThreadFactory("payment-async-$accountName")
     )
 
     private val rateLimiter = SlidingWindowRateLimiter(
-        rate = rateLimitPerSec.toLong(),  // Строго 11 для acc-23 (без 110%)
+        rate = (rateLimitPerSec * 1.05).toLong(),
         window = Duration.ofSeconds(1)
     )
 

@@ -66,8 +66,8 @@ class APIController(
         val now = System.currentTimeMillis()
         val timeUntilDeadline = deadline - now
 
-        if (timeUntilDeadline < 10000) {
-            throw IllegalArgumentException("Deadline too close: ${timeUntilDeadline}ms remaining. Minimum required: 10000ms")
+        if (timeUntilDeadline < 5000) {
+            throw IllegalArgumentException("Deadline too close: ${timeUntilDeadline}ms remaining. Minimum required: 5000ms")
         }
 
         if (!orderPayer.canAcceptRequest()) {
