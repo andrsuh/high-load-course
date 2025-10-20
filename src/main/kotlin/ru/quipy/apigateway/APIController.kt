@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.web.bind.annotation.*
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.ExceptionHandler
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.common.utils.RateLimiter
@@ -61,12 +63,23 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+        val now = System.currentTimeMillis()
+        val timeUntilDeadline = deadline - now
+
+        if (timeUntilDeadline < 10000) {
+            throw IllegalArgumentException("Deadline too close: ${timeUntilDeadline}ms remaining. Minimum required: 10000ms")
+        }
+
+        if (!orderPayer.canAcceptRequest()) {
+            val retryAfterMs = now + 500  // Просим подождать 500ms
+            throw TooManyRequestsException("System overloaded. Current queue: ${orderPayer.getQueueSize()}. Retry-After: $retryAfterMs")
+        }
+
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
-
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         return PaymentSubmissionDto(createdAt, paymentId)
@@ -76,7 +89,19 @@ class APIController(
         val timestamp: Long,
         val transactionId: UUID
     )
+
+    @ExceptionHandler(TooManyRequestsException::class)
+    fun handleTooManyRequests(ex: TooManyRequestsException): ResponseEntity<ErrorResponse> {
+        val retryAfter = ex.message?.substringAfter("Retry-After: ")?.toLongOrNull()
+            ?: (System.currentTimeMillis() + 1000)
+
+        return ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .header("Retry-After", retryAfter.toString())
+            .body(ErrorResponse(ex.message ?: "Too many requests", retryAfter))
+    }
+
+    data class ErrorResponse(val message: String, val retryAfter: Long)
 }
 
-@ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
 class TooManyRequestsException(message: String) : RuntimeException(message)
