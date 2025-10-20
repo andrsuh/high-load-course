@@ -42,17 +42,11 @@ class OrderPayer {
             return createdAt
         }
 
-        activeRequestsCount.incrementAndGet()
-
-        try {
-            paymentESService.create {
-                it.create(paymentId, orderId, amount)
-            }
-
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
-        } finally {
-            activeRequestsCount.decrementAndGet()
+        paymentESService.create {
+            it.create(paymentId, orderId, amount)
         }
+
+        paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, activeRequestsCount)
 
         return createdAt
     }

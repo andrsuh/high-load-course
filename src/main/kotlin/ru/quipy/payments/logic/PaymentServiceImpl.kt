@@ -10,6 +10,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.withLock
 
 
@@ -21,9 +22,9 @@ class PaymentSystemImpl(
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
     }
 
-    override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: AtomicInteger) {
         for (account in paymentAccounts) {
-            account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+            account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline, activeRequestsCount)
         }
     }
 }

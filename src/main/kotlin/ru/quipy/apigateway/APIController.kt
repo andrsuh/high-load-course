@@ -64,11 +64,6 @@ class APIController(
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val now = System.currentTimeMillis()
-        val timeUntilDeadline = deadline - now
-
-        if (timeUntilDeadline < 5000) {
-            throw IllegalArgumentException("Deadline too close: ${timeUntilDeadline}ms remaining. Minimum required: 5000ms")
-        }
 
         if (!orderPayer.canAcceptRequest()) {
             val retryAfterMs = now + 500  // Просим подождать 500ms

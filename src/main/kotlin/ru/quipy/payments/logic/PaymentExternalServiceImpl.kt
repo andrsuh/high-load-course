@@ -17,6 +17,7 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicInteger
 import ru.quipy.common.utils.NamedThreadFactory
 
 
@@ -69,7 +70,7 @@ class PaymentExternalSystemAdapterImpl(
         window = Duration.ofSeconds(1)
     )
 
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: java.util.concurrent.atomic.AtomicInteger) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -80,8 +81,14 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
+        activeRequestsCount.incrementAndGet()
+
         asyncExecutor.submit {
-            executeWithSemaphore(paymentId, transactionId, amount, deadline)
+            try {
+                executeWithSemaphore(paymentId, transactionId, amount, deadline)
+            } finally {
+                activeRequestsCount.decrementAndGet()
+            }
         }
     }
 
