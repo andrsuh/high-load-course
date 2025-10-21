@@ -20,9 +20,10 @@
         <kotlinx-coroutines-core.version>1.9.0</kotlinx-coroutines-core.version>
         <okhttp.version>4.12.0</okhttp.version>
         <tiny.es.version>2.7.5</tiny.es.version>
-        <resilience4jVersion>2.2.0</resilience4jVersion>
+        <resilience4jRateLimiter.version>2.2.0</resilience4jRateLimiter.version>
         <json-datatype.version>2.9.8</json-datatype.version>
         <caffeine.version>3.1.8</caffeine.version>
+        <resilience4j.version>2.2.0</resilience4j.version>
     </properties>
 
 	<dependencies>
@@ -131,6 +132,22 @@
             <artifactId>kotlin-test</artifactId>
             <version>${kotlin.version}</version>
             <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-ratelimiter</artifactId>
+            <version>${resilience4jRateLimiter.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+            <version>${resilience4jRateLimiter.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
     </dependencies>
 

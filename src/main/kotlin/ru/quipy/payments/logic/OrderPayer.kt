@@ -1,5 +1,7 @@
 package ru.quipy.payments.logic
 
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -26,15 +28,32 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+    private val queue = LinkedBlockingQueue<Runnable>(128)
+
+    private val paymentExecutor = ThreadPoolExecutor(11, 11,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(8_000),
+        queue,
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
+
+    init {
+        Gauge.builder("payment.executor.queue.size") { queue.size.toDouble() }
+            .description("Current number of tasks waiting in payment executor queue")
+            .tag("component", "order-payer")
+            .register(Metrics.globalRegistry)
+
+        Gauge.builder("payment.executor.active.count") { paymentExecutor.activeCount.toDouble() }
+            .description("Number of actively executing threads in payment executor")
+            .tag("component", "order-payer")
+            .register(Metrics.globalRegistry)
+
+        Gauge.builder("payment.executor.completed.count") { paymentExecutor.completedTaskCount.toDouble() }
+            .description("Total number of completed tasks by payment executor")
+            .tag("component", "order-payer")
+            .register(Metrics.globalRegistry)
+    }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()

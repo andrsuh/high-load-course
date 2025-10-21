@@ -17,18 +17,26 @@ class SlidingWindowRateLimiter(
     private val rate: Long,
     private val window: Duration,
 ) : RateLimiter {
+    private val lock = ReentrantLock()
+    private val windowDurationMs = window.toMillis()
+    private val requestTimestamps = mutableListOf<Long>()
+    private var lastCleanupTime = System.currentTimeMillis()
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     private val sum = AtomicLong(0)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
 
     override fun tick(): Boolean {
-        while (true) {
-            val curSum = sum.get()
-            if (curSum >= rate) return false
-            if (sum.compareAndSet(curSum, curSum + 1)) {
-                queue.add(Measure(1, System.currentTimeMillis()))
-                return true
+        return lock.withLock {
+            val now = System.currentTimeMillis()
+            val windowStart = now - windowDurationMs
+
+            cleanupOldRequests(now, windowStart)
+            if (requestTimestamps.size < rate) {
+                requestTimestamps.add(now)
+                true
+            } else {
+                false
             }
         }
     }
@@ -67,4 +75,28 @@ class SlidingWindowRateLimiter(
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(SlidingWindowRateLimiter::class.java)
     }
+
+    private fun cleanupOldRequests(now: Long, windowStart: Long) {
+        if (now - lastCleanupTime <= 50) return
+
+        val iterator = requestTimestamps.iterator()
+        var removedCount = 0
+
+        while (iterator.hasNext()) {
+            val timestamp = iterator.next()
+            if (timestamp <= windowStart) {
+                iterator.remove()
+                removedCount++
+            } else {
+                break
+            }
+        }
+
+        lastCleanupTime = now
+
+        if (removedCount > 0) {
+            logger.trace("Cleaned up $removedCount old requests from sliding window")
+        }
+    }
+
 }
