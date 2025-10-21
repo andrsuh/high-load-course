@@ -7,7 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.metrics.MetricsCollector
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
@@ -62,11 +62,11 @@ class APIController(
         PAID,
     }
 
-    private lateinit var rateLimiter : SlidingWindowRateLimiter
+    private lateinit var rateLimiter : LeakingBucketRateLimiter
     @PostConstruct
     fun init() {
-        val limit = orderPayer.getMaxRateLimit() // теперь orderPayer уже внедрён
-        this.rateLimiter = SlidingWindowRateLimiter(limit.toLong(), Duration.ofSeconds(1))
+        val limit = orderPayer.getMaxRateLimit()
+        this.rateLimiter = LeakingBucketRateLimiter(limit.toLong() * 3, Duration.ofSeconds(3), (limit * 3.6).toInt())
     }
 
     @PostMapping("/orders/{orderId}/payment")
