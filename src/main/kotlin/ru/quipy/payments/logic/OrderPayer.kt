@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
-import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -15,8 +14,6 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import kotlin.time.Duration.Companion.seconds
-import kotlin.time.toJavaDuration
 
 @Service
 class OrderPayer {
@@ -36,9 +33,8 @@ class OrderPayer {
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(100),
-        NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler(maxWait = 5.seconds.toJavaDuration())
+        LinkedBlockingQueue(290),
+        NamedThreadFactory("payment-submission-executor")
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
@@ -56,7 +52,7 @@ class OrderPayer {
 
                 paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
             }
-        } catch (e: RejectedExecutionException) {
+        } catch (_: RejectedExecutionException) {
             throw ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many requests")
         }
 

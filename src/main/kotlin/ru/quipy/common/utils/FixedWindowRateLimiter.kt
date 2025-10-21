@@ -141,7 +141,7 @@ fun makeRateLimiter(accountName: String, rate: Int, timeUnit: TimeUnit = TimeUni
     val config = RateLimiterConfig.custom()
         .limitRefreshPeriod(if (timeUnit == TimeUnit.SECONDS) Duration.ofSeconds(1) else Duration.ofMinutes(1))
         .limitForPeriod(rate)
-        .timeoutDuration(Duration.ofSeconds(5))
+        .timeoutDuration(Duration.ofSeconds(60))
         .build()
 
     val rateLimiterRegistry = RateLimiterRegistry.of(config)
