@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.core.EventSourcingService
+import ru.quipy.metrics.MetricsCollector
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.*
 import java.net.URI
@@ -17,7 +18,9 @@ import java.util.*
 
 
 @Configuration
-class PaymentAccountsConfig {
+class PaymentAccountsConfig(
+    private val metricsCollector: MetricsCollector
+) {
     companion object {
         private val javaClient = HttpClient.newBuilder().build()
         private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
@@ -57,7 +60,8 @@ class PaymentAccountsConfig {
                     it,
                     paymentService,
                     paymentProviderHostPort,
-                    token
+                    token,
+                    metricsCollector,
                 )
             }
     }

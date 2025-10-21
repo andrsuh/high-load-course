@@ -15,7 +15,9 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @Service
-class OrderPayer {
+class OrderPayer(
+    metricsCollector: MetricsCollector
+) {
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -27,7 +29,6 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val metricsCollector = MetricsCollector()
     private val paymentExecutor: ThreadPoolExecutor
 
     init {

@@ -16,9 +16,9 @@ import kotlin.concurrent.withLock
 
 @Service
 class PaymentSystemImpl(
-    private val paymentAccounts: List<PaymentExternalSystemAdapter>
+    private val paymentAccounts: List<PaymentExternalSystemAdapter>,
+    private val metricsCollector: MetricsCollector
 ) : PaymentService {
-    val metricsCollector = MetricsCollector()
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)

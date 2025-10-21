@@ -34,6 +34,14 @@ class MetricsCollector {
             .increment()
     }
 
+    private val tooManyRequestsCounter = Counter
+        .builder("too_many_requests")
+        .description("Number of failed requests")
+        .register(Metrics.globalRegistry)
+
+    fun status429RequestInc() {
+        tooManyRequestsCounter.increment()
+    }
     fun failedRequestExternalInc(account: String) {
         Counter
             .builder("failed_requests_external_total")

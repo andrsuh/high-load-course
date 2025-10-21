@@ -22,9 +22,8 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    private val metricsCollector: MetricsCollector
 ) : PaymentExternalSystemAdapter {
-
-    private val metricsCollector = MetricsCollector()
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
