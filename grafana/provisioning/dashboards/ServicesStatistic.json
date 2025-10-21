@@ -732,7 +732,7 @@
           "refId": "A"
         }
       ],
-      "title": "Rate Limit Exceeded (429) per second",
+      "title": "Rate Limit Exceeded (429)",
       "type": "timeseries"
     },
     {
