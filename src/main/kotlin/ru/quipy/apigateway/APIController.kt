@@ -8,11 +8,14 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import ru.quipy.common.utils.CompositeRateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 @RestController
 class APIController(
@@ -28,10 +31,19 @@ class APIController(
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
+
+    private var compositeRateLimiter =
+        CompositeRateLimiter(
+            SlidingWindowRateLimiter(rate = 11, Duration.ofSeconds(1)),
+            TokenBucketRateLimiter(
+                rate = 11,
+                bucketMaxCapacity = 158,
+                window = 1,
+                timeUnit = TimeUnit.SECONDS
+            )
+        )
     private val counter = Counter.builder("queries.amount").tag("name", "orders").register(registry)
     private val counterPayment = Counter.builder("queries.amount").tag("name", "payment").register(registry)
-
-    private val slidingWindowRateLimiter = SlidingWindowRateLimiter(30, Duration.ofSeconds(3))
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
@@ -74,10 +86,14 @@ class APIController(
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
         val paymentId = UUID.randomUUID()
 
-        val timestamp = System.currentTimeMillis() + 1000
-        if (!slidingWindowRateLimiter.tick()) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", timestamp.toString()).build();
+
+        val timestamp = System.currentTimeMillis() + 2500
+        if (!compositeRateLimiter.tick()) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", timestamp.toString())
+                .build()
         }
+
 
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
@@ -85,7 +101,15 @@ class APIController(
         } ?: throw IllegalArgumentException("No such order $orderId")
 
         counterPayment.increment()
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+
+        var createdAt = 0L
+        try {
+            createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+        } catch (e: RuntimeException) {
+            val timestamp = System.currentTimeMillis() + 1000
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", timestamp.toString()).build();
+        }
+
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
 

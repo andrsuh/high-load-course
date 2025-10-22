@@ -5,6 +5,6 @@ class CompositeRateLimiter(
     private val rl2: RateLimiter,
 ) : RateLimiter {
     override fun tick(): Boolean {
-        return rl1.tick() && rl2.tick()
+        return rl1.tick() && rl2.tick() // for Test-3 ||
     }
 }
