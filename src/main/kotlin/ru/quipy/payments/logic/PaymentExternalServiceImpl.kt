@@ -15,6 +15,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.RejectedExecutionException
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -61,6 +62,10 @@ class PaymentExternalSystemAdapterImpl(
         .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        if (deadline - now() < requestAverageProcessingTime.toMillis()) {
+            throw RejectedExecutionException()
+        }
+
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()

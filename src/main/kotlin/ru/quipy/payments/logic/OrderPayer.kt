@@ -3,12 +3,12 @@ package ru.quipy.payments.logic
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
-import org.springframework.web.server.ResponseStatusException
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.time.Duration
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
@@ -28,6 +28,8 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private var rateLimiter = LeakingBucketRateLimiter(10, Duration.ofSeconds(1), 240)
+
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -39,21 +41,21 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        try {
-            paymentExecutor.submit {
-                val createdEvent = paymentESService.create {
-                    it.create(
-                        paymentId,
-                        orderId,
-                        amount
-                    )
-                }
-                logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+        if (!rateLimiter.tick()) {
+            throw RejectedExecutionException()
+        }
 
-                paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+        paymentExecutor.submit {
+            val createdEvent = paymentESService.create {
+                it.create(
+                    paymentId,
+                    orderId,
+                    amount
+                )
             }
-        } catch (_: RejectedExecutionException) {
-            throw ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many requests")
+            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
 
         return createdAt
