@@ -13,7 +13,9 @@ import java.util.*
 @Service
 class OrderPayer {
 
-    val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+    companion object {
+        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+    }
 
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>

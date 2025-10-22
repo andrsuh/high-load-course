@@ -94,7 +94,7 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun canAcceptPayment(deadline: Long): Pair<Boolean, Long> {
         val estimatedWaitMs = (queue.size / minimalLimitPerSec) * 1000
-        val additionalTimeMs = 500
+        val additionalTimeMs = 1250
         val willCompleteAt = now() + estimatedWaitMs + additionalTimeMs + requestAverageProcessingTime.toMillis()
 
         val canMeetDeadline = willCompleteAt < deadline
@@ -139,7 +139,6 @@ class PaymentExternalSystemAdapterImpl(
             )
         }
     }
-
 
     fun performPaymentWithRetry(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -213,7 +212,6 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.error("[$accountName] Payment failed after retries for txId: $transactionId, payment: $paymentId — reason: $reason")
     }
-
 
     override fun price() = properties.price
 
