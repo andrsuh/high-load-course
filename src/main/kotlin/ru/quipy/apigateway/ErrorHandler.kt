@@ -13,7 +13,7 @@ class ErrorHandler {
     @ExceptionHandler
     fun handleRejectedExecutionException(e: RejectedExecutionException): ResponseEntity<String> {
         val headers = HttpHeaders()
-        val retryAfterSeconds = 15
+        val retryAfterSeconds = 60
         headers.add("Retry-After", retryAfterSeconds.toString())
 
         return ResponseEntity("Too many requests", headers, HttpStatus.TOO_MANY_REQUESTS)
