@@ -1,0 +1,43 @@
+### Run test locally
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "AcDc",
+  "token": "m2maxfs2763AC10gGp",
+  "ratePerSecond": 15,
+  "testCount": 3000,
+  "processingTimeMillis": 2500
+}
+
+### Stop running test to save time and resources
+# @timeout 120
+POST http://localhost:1234/test/stop/AcDc
+
+
+
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "AcDc",
+  "token": "m2maxfs2763AC10gGp",
+  "ratePerSecond": 11,
+  "testCount": 2200,
+  "processingTimeMillis": 13000,
+  "profile": "s_0.7_60"
+}
+
+
+
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "AcDc",
+  "token": "m2maxfs2763AC10gGp",
+  "ratePerSecond": 3,
+  "testCount": 1050,
+  "processingTimeMillis": 26000,
+  "runits" : 90
+}
