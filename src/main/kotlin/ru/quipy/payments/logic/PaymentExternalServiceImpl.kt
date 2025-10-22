@@ -126,6 +126,10 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun isEnabled() = properties.enabled
 
+    override fun getProperties() : PaymentAccountProperties {
+        return properties
+    }
+
     override fun name() = properties.accountName
 
     fun checkDeadline(paymentId: UUID, transactionId: UUID, deadline: Long)  : Boolean {

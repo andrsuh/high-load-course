@@ -48,12 +48,23 @@ class OrderPayer{
         CallerBlockingRejectedExecutionHandler()
     )
 
+    private fun processingSpeed(property : PaymentAccountProperties) : Double{
+        return kotlin.math.min(property.rateLimitPerSec.toDouble(), property.parallelRequests.toDouble() / property.averageProcessingTime.toSeconds())
+    }
+
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long,metrics: HttpMetrics): Triple<Long, Boolean, Long> {
         val createdAt = System.currentTimeMillis()
-        val timeToProcessAllInQueue = (linkedBlockingQueue.size * 13) * 1000
+        val canParallel = paymentService.getAccountsProperties().minOf { p -> processingSpeed(p)}
+        val maxProcessingTime = paymentService.getAccountsProperties().minOf { p -> p.averageProcessingTime}
+
+        val timeToProcessAllInQueue = ((linkedBlockingQueue.size.toDouble()) / canParallel) * (maxProcessingTime.toSeconds()+2) * 1000
+        val size = linkedBlockingQueue.size
+        logger.info("Payment ${paymentId} for order $orderId created. timeToProcessAllInQueue $timeToProcessAllInQueue queueSize $size"  )
         if ((createdAt + timeToProcessAllInQueue ) > deadline)
         {
-            return Triple(createdAt,false,createdAt + timeToProcessAllInQueue)
+            logger.info("send too many requests becouse createdAt $createdAt + $timeToProcessAllInQueue > $deadline"  )
+            metrics.toManyRequestsDelayTime.record(timeToProcessAllInQueue.toLong(), TimeUnit.MILLISECONDS)
+            return Triple(createdAt,false,createdAt + timeToProcessAllInQueue.toLong())
         }
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
