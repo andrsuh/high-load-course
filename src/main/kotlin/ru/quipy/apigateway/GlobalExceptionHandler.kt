@@ -1,10 +1,11 @@
-package ru.quipy.common.utils
+package ru.quipy.apigateway
 
+import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
-import org.slf4j.LoggerFactory
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import ru.quipy.exceptions.TooManyRequestsException
 
 @RestControllerAdvice
 class GlobalExceptionHandler(
@@ -15,10 +16,10 @@ class GlobalExceptionHandler(
     }
 
     @ExceptionHandler(TooManyRequestsException::class)
-    fun handleTooManyRequests(ex: TooManyRequestsException): ResponseEntity<String> {
+    fun handleTooManyRequests(): ResponseEntity<String> {
         return ResponseEntity
             .status(HttpStatus.TOO_MANY_REQUESTS)
             .header("Retry-After", maxWait)
-            .body(ex.message ?: "Повторите позже")
+            .build()
     }
 }

@@ -8,8 +8,8 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
-import ru.quipy.common.utils.TooManyRequestsException
 import ru.quipy.core.EventSourcingService
+import ru.quipy.exceptions.TooManyRequestsException
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.dto.Transaction
 import java.time.Duration
@@ -59,10 +59,10 @@ class OrderPayer(
         paymentProcessingPlannedCounter.increment()
 
         val task = Runnable {
+            parallelLimiter.acquire()
             while (!rateLimit.tick()) {
                 Thread.sleep(Random().nextInt(0, 10).toLong())
             }
-            parallelLimiter.acquire()
             paymentProcessingStartedCounter.increment()
             try {
                 val createdEvent = paymentESService.create {
@@ -87,7 +87,7 @@ class OrderPayer(
             paymentExecutor.execute(transaction)
             return createdAt
         } catch (_: RejectedExecutionException) {
-            throw TooManyRequestsException("Сервер перегружен. Повторите позже.")
+            throw TooManyRequestsException()
         }
     }
 }
