@@ -40,8 +40,6 @@ class PaymentExternalSystemAdapterImpl(
 
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
 
-    // Кейс 3 Если поставить окно больше, например 14, будет лететь parallel_request_limit_breached, но он почему-то не считает
-    // их за неукспешное выпольнение, и тогда будет 90 процентов успеха и нормальный income. Но мы так делать не будем - это неправильно
     private val ongoingWindow = OngoingWindow(parallelRequests, true)
 
     private val client = OkHttpClient.Builder().build()
@@ -58,27 +56,10 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-        if (now() + requestAverageProcessingTime > deadline) {
-            metricsCollector.failedRequestInc(accountName)
-            paymentESService.update(paymentId) {
-                it.logProcessing(success = false, now(), transactionId = transactionId, reason = "timeout")
-            }
-
-            return
-        }
 
         try {
             ongoingWindow.acquire()
             rateLimiter.tickBlocking()
-
-            if (now() + requestAverageProcessingTime > deadline) {
-                metricsCollector.failedRequestInc(accountName)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(success = false, now(), transactionId = transactionId, reason = "timeout")
-                }
-
-                return
-            }
 
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")

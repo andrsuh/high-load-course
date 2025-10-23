@@ -1,17 +1,14 @@
 package ru.quipy.apigateway
 
-import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.metrics.MetricsCollector
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import java.time.Duration
 import java.util.*
 
 @RestController
@@ -62,22 +59,8 @@ class APIController(
         PAID,
     }
 
-    private lateinit var rateLimiter : LeakingBucketRateLimiter
-    @PostConstruct
-    fun init() {
-        val limit = orderPayer.getMaxRateLimit()
-        this.rateLimiter = LeakingBucketRateLimiter(limit.toLong() * 3, Duration.ofSeconds(3), (limit * 3.6).toInt())
-    }
-
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
-        if (!rateLimiter.tick()) {
-            metricsCollector.status429RequestInc()
-            return ResponseEntity
-                .status(HttpStatus.TOO_MANY_REQUESTS)
-                .build()
-        }
-
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
@@ -86,6 +69,13 @@ class APIController(
 
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+        if (createdAt == null){
+            metricsCollector.status429RequestInc()
+            return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
+                .build()
+        }
+
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
 
