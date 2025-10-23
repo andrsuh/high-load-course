@@ -30,7 +30,7 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val maxQueueLength : Int = 11
+    private val maxQueueLength : Int = 16
     private val rateLimitPerSec : Long = 11
     private val freeSpaceWaitTime : java.time.Duration = java.time.Duration.ofMinutes(0)
 
