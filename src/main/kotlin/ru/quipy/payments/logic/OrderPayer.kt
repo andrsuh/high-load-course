@@ -6,10 +6,10 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
-import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
+import ru.quipy.exceptions.TooManyRequestsException
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.dto.Transaction
 import java.time.Duration
@@ -41,9 +41,9 @@ class OrderPayer(
             accountProperties.parallelRequests,
             0L,
             TimeUnit.MILLISECONDS,
-            PriorityBlockingQueue(accountProperties.parallelRequests, compareBy<Transaction> { it.deadline }) as BlockingQueue<Runnable>,
+            ArrayBlockingQueue<Runnable>(accountProperties.parallelRequests),
             NamedThreadFactory("payment-submission-executor"),
-            CallerBlockingRejectedExecutionHandler()
+            ThreadPoolExecutor.AbortPolicy()
         )
     }
 
@@ -58,36 +58,36 @@ class OrderPayer(
         val createdAt = System.currentTimeMillis()
         paymentProcessingPlannedCounter.increment()
 
-       return try {
-           val task = Runnable {
-               while (!rateLimit.tick()) {
-                   Thread.sleep(Random().nextInt(0, 10).toLong())
-               }
-               parallelLimiter.acquire()
-               paymentProcessingStartedCounter.increment()
-               try {
-                   val createdEvent = paymentESService.create {
-                       it.create(paymentId, orderId, amount)
-                   }
-                   logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
-                   paymentService.submitPaymentRequest(
-                       paymentId,
-                       amount,
-                       createdAt,
-                       deadline
-                   )
-               } finally {
-                   parallelLimiter.release()
-                   paymentProcessingCompletedCounter.increment()
-               }
-           }
-           val transaction = Transaction(orderId, amount, paymentId, deadline, task)
-           paymentExecutor.execute( transaction)
-           createdAt
-       } catch (e: Exception) {
-           parallelLimiter.release()
-           throw e
-       }
+        val task = Runnable {
+            parallelLimiter.acquire()
+            while (!rateLimit.tick()) {
+                Thread.sleep(Random().nextInt(0, 10).toLong())
+            }
+            paymentProcessingStartedCounter.increment()
+            try {
+                val createdEvent = paymentESService.create {
+                    it.create(paymentId, orderId, amount)
+                }
+                logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
+                paymentService.submitPaymentRequest(
+                    paymentId,
+                    amount,
+                    createdAt,
+                    deadline
+                )
+            } finally {
+                parallelLimiter.release()
+                paymentProcessingCompletedCounter.increment()
+            }
+        }
 
-}
+        val transaction = Transaction(orderId, amount, paymentId, deadline, task)
+
+        try {
+            paymentExecutor.execute(transaction)
+            return createdAt
+        } catch (_: RejectedExecutionException) {
+            throw TooManyRequestsException()
+        }
+    }
 }
