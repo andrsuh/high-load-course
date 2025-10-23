@@ -17,7 +17,8 @@ import java.util.concurrent.TimeUnit
 
 @Service
 class OrderPayer(
-    private val metricsCollector: MetricsCollector
+    private val metricsCollector: MetricsCollector,
+    private val paymentService: PaymentService
 ) {
 
     companion object {
@@ -26,9 +27,6 @@ class OrderPayer(
 
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
-
-    @Autowired
-    private lateinit var paymentService: PaymentService
 
     private var avgTimeKeeper = AverageTimeKeeper()
 
@@ -89,7 +87,7 @@ class OrderPayer(
         return createdAt
     }
 
-    private fun processInternal(payment: Payment) {
+    private fun processInternal(payment: Payment){
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(
@@ -111,6 +109,5 @@ class OrderPayer(
         val deadline: Long,
         val createdAt: Long
     )
-
     fun getMaxRateLimit() = paymentService.getMaxRateLimit()
 }
