@@ -67,7 +67,7 @@ class APIController(
         val now = System.currentTimeMillis()
 
         if (!incomingPaymentRateLimiter.tick()) {
-            val retryAfterMs = now + 100
+            val retryAfterMs = now + 50
             throw TooManyRequestsException("Rate limit exceeded. Retry-After: $retryAfterMs")
         }
 
