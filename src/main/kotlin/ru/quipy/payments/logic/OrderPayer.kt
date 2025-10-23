@@ -39,6 +39,12 @@ class OrderPayer {
         CallerBlockingRejectedExecutionHandler()
     )
 
+    fun canAcceptRequest(): Boolean {
+        val hasFreeWorker = paymentExecutor.activeCount < paymentExecutor.maximumPoolSize
+        val hasQueueCapacity = paymentExecutor.queue.remainingCapacity() > 0
+        return hasFreeWorker || hasQueueCapacity
+    }
+
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
         paymentExecutor.submit {

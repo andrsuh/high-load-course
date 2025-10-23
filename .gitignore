@@ -21,6 +21,8 @@ grafana/data/
 *.iml
 *.ipr
 http-client.env.json
+.DS_Store
+*/.DS_Store
 
 ### NetBeans ###
 /nbproject/private/

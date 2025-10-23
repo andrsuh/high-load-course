@@ -13,8 +13,12 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 
 
 // Advice: always treat time as a Duration
@@ -39,9 +43,19 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
     private val rateLimiter by lazy {
-        rateLimiterFactory.getRateLimiterForAccount(accountName, (rateLimitPerSec * 0.9).toInt())
+        rateLimiterFactory.getRateLimiterForAccount(accountName, rateLimitPerSec)
     }
-    private val paymentExecutor = Executors.newFixedThreadPool(parallelRequests)
+    private val optimalConcurrency = maxOf(parallelRequests, (rateLimitPerSec * requestAverageProcessingTime.seconds).toInt().coerceAtLeast(1))
+    private val queueCapacity = maxOf(optimalConcurrency * 8, 256)
+    private val paymentExecutor = ThreadPoolExecutor(
+        optimalConcurrency,
+        optimalConcurrency,
+        0L,
+        TimeUnit.MILLISECONDS,
+        LinkedBlockingQueue(queueCapacity),
+        NamedThreadFactory("payment-out-$accountName"),
+        CallerBlockingRejectedExecutionHandler()
+    )
 
     private val client = OkHttpClient.Builder().build()
 
