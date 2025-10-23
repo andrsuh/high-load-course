@@ -64,6 +64,7 @@ class APIController {
 
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 

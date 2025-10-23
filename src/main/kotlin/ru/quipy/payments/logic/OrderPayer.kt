@@ -4,9 +4,11 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
+import org.springframework.web.client.HttpClientErrorException
 import org.testcontainers.shaded.org.bouncycastle.util.Integers
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
@@ -28,7 +30,8 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val maxQueueLength : Int = 330
+    private val maxQueueLength : Int = 30
+    private val rateLimitPerSec : Long = 11
     private val freeSpaceWaitTime : java.time.Duration = java.time.Duration.ofMinutes(0)
 
     private val paymentExecutor = ThreadPoolExecutor(
