@@ -72,7 +72,7 @@ class OrderPayer(
         val createdAt = System.currentTimeMillis()
         val averageProcessingTime = avgTimeKeeper.getAverage()
 
-        val maxProcessingTime = averageProcessingTime * 1.1
+        val maxProcessingTime = averageProcessingTime * 1.5
 
         val queueProcessingTime = (paymentTaskQueue.size + backgroundWorkers) * maxProcessingTime / backgroundWorkers
 
