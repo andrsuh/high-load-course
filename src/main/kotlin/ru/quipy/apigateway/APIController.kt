@@ -67,13 +67,16 @@ class APIController(
         val now = System.currentTimeMillis()
 
         if (!incomingPaymentRateLimiter.tick()) {
-            val retryAfterMs = now + 50
-            throw TooManyRequestsException("Rate limit exceeded. Retry-After: $retryAfterMs")
+            // RFC 7231: Retry-After in SECONDS (delay-seconds format)
+            // Token available every ~91ms (1000ms / 11 RPS)
+            // Use 0 seconds = immediate retry for maximum throughput
+            throw TooManyRequestsException("Rate limit exceeded. Retry-After: 0")
         }
 
         if (!orderPayer.canAcceptRequest()) {
-            val retryAfterMs = now + 500
-            throw TooManyRequestsException("System overloaded. Current queue: ${orderPayer.getQueueSize()}. Retry-After: $retryAfterMs")
+            // RFC 7231: Retry-After in SECONDS (delay-seconds format)
+            // Use 0 seconds = immediate retry
+            throw TooManyRequestsException("System overloaded. Current queue: ${orderPayer.getQueueSize()}. Retry-After: 0")
         }
 
         val paymentId = UUID.randomUUID()
@@ -93,16 +96,16 @@ class APIController(
 
     @ExceptionHandler(TooManyRequestsException::class)
     fun handleTooManyRequests(ex: TooManyRequestsException): ResponseEntity<ErrorResponse> {
-        val retryAfter = ex.message?.substringAfter("Retry-After: ")?.toLongOrNull()
-            ?: (System.currentTimeMillis() + 1000)
+
+        val retryAfterSeconds = ex.message?.substringAfter("Retry-After: ")?.toIntOrNull() ?: 0
 
         return ResponseEntity
             .status(HttpStatus.TOO_MANY_REQUESTS)
-            .header("Retry-After", retryAfter.toString())
-            .body(ErrorResponse(ex.message ?: "Too many requests", retryAfter))
+            .header("Retry-After", retryAfterSeconds.toString())
+            .body(ErrorResponse(ex.message ?: "Too many requests", retryAfterSeconds))
     }
 
-    data class ErrorResponse(val message: String, val retryAfter: Long)
+    data class ErrorResponse(val message: String, val retryAfter: Int)
 }
 
 class TooManyRequestsException(message: String) : RuntimeException(message)
