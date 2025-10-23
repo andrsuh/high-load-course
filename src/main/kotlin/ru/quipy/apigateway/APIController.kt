@@ -65,7 +65,7 @@ class APIController(
     @PostConstruct
     fun init() {
         val limit = orderPayer.getMaxRateLimit()
-        this.rateLimiter = LeakingBucketRateLimiter(limit.toLong(), Duration.ofSeconds(1), 200)
+        this.rateLimiter = LeakingBucketRateLimiter(limit.toLong(), Duration.ofSeconds(1), 400)
     }
 
 
@@ -75,6 +75,7 @@ class APIController(
             metricsCollector.status429RequestInc()
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "10")
                 .build()
         }
 
