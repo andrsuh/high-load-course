@@ -4,10 +4,10 @@ Content-Type: application/json
 
 {
   "serviceName": "darkside",
-  "token": "token",
-  "ratePerSecond": 2,
-  "testCount": 500,
-  "processingTimeMillis": 60000
+  "token": "secret",
+  "ratePerSecond": 15,
+  "testCount": 3000,
+  "processingTimeMillis": 2500
 }
 
 ### Stop running test to save time and resources
