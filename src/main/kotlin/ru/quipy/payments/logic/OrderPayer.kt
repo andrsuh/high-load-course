@@ -88,18 +88,17 @@ class OrderPayer(
     }
 
     private fun processInternal(payment: Payment){
-        paymentExecutor.submit {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    payment.paymentId,
-                    payment.orderId,
-                    payment.amount
-                )
-            }
-            logger.trace("Payment ${createdEvent.paymentId} for order $payment.orderId created.")
-
-            paymentService.submitPaymentRequest(payment.paymentId, payment.amount, payment.createdAt, payment.deadline)
+        val createdEvent = paymentESService.create {
+            it.create(
+                payment.paymentId,
+                payment.orderId,
+                payment.amount
+            )
         }
+
+        logger.trace("Payment ${createdEvent.paymentId} for order $payment.orderId created.")
+
+        paymentService.submitPaymentRequest(payment.paymentId, payment.amount, payment.createdAt, payment.deadline)
     }
 
     private data class Payment(
