@@ -24,4 +24,13 @@ class RateLimiterConfig {
             window = Duration.ofSeconds(1)
         )
     }
+
+
+    @Bean
+    fun incomingPaymentRateLimiter(): RateLimiter {
+        return SlidingWindowRateLimiter(
+            rate = 11,
+            window = Duration.ofSeconds(1)
+        )
+    }
 }

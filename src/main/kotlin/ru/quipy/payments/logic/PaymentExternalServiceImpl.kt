@@ -66,7 +66,7 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     private val rateLimiter = SlidingWindowRateLimiter(
-        rate = (rateLimitPerSec * 1.05).toLong(),
+        rate = rateLimitPerSec.toLong(),  // Case #5: Strict rate limit (11 RPS for acc-23)
         window = Duration.ofSeconds(1)
     )
 
@@ -121,7 +121,6 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             while (!rateLimiter.tick()) {
-                // Проверяем deadline в цикле ожидания rate limiter
                 if (now() >= deadline) {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline expired while waiting for rate limit")
@@ -165,7 +164,6 @@ class PaymentExternalSystemAdapterImpl(
                 }
 
                 if (!response.isSuccessful && attempt <= 3) {
-                    // ПРОВЕРКА deadline перед retry!
                     if (now() >= deadline) {
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Retry aborted - deadline expired")

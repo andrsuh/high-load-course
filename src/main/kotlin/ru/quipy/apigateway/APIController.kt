@@ -15,7 +15,8 @@ import java.util.*
 @RestController
 class APIController(
     private val orderRateLimiter: RateLimiter,
-    private val paymentRateLimiter: RateLimiter
+    private val paymentRateLimiter: RateLimiter,
+    private val incomingPaymentRateLimiter: RateLimiter
 ) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
@@ -65,6 +66,12 @@ class APIController(
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val now = System.currentTimeMillis()
 
+        if (!incomingPaymentRateLimiter.tick()) {
+            val retryAfterMs = now + 100  // ~91ms + запас
+            throw TooManyRequestsException("Rate limit exceeded. Retry-After: $retryAfterMs")
+        }
+
+        // Backpressure check (вторая линия защиты)
         if (!orderPayer.canAcceptRequest()) {
             val retryAfterMs = now + 500  // Просим подождать 500ms
             throw TooManyRequestsException("System overloaded. Current queue: ${orderPayer.getQueueSize()}. Retry-After: $retryAfterMs")
