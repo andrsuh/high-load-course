@@ -94,7 +94,7 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun canAcceptPayment(deadline: Long): Pair<Boolean, Long> {
         val estimatedWaitMs = (queue.size / minimalLimitPerSec) * 1000
-        val additionalTimeMs = 1250
+        val additionalTimeMs = 1000
         val willCompleteAt = now() + estimatedWaitMs + additionalTimeMs + requestAverageProcessingTime.toMillis()
 
         val canMeetDeadline = willCompleteAt < deadline
