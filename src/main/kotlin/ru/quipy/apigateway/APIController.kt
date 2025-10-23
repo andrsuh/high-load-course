@@ -67,13 +67,12 @@ class APIController(
         val now = System.currentTimeMillis()
 
         if (!incomingPaymentRateLimiter.tick()) {
-            val retryAfterMs = now + 100  // ~91ms + запас
+            val retryAfterMs = now + 100
             throw TooManyRequestsException("Rate limit exceeded. Retry-After: $retryAfterMs")
         }
 
-        // Backpressure check (вторая линия защиты)
         if (!orderPayer.canAcceptRequest()) {
-            val retryAfterMs = now + 500  // Просим подождать 500ms
+            val retryAfterMs = now + 500
             throw TooManyRequestsException("System overloaded. Current queue: ${orderPayer.getQueueSize()}. Retry-After: $retryAfterMs")
         }
 
