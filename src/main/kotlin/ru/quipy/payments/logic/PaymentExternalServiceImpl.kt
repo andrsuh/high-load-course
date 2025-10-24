@@ -121,7 +121,6 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             while (!rateLimiter.tick()) {
-                // Проверяем deadline в цикле ожидания rate limiter
                 if (now() >= deadline) {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline expired while waiting for rate limit")
