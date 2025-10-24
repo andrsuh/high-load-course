@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
 
 class TokenBucketRateLimiter(
     private val rate: Int,
@@ -50,4 +52,16 @@ class TokenBucketRateLimiter(
             }
         }
     }
+
+    fun size() : Int {
+        return bucket.get()
+    }
+
+    val rateLimiterQueueCounter: Gauge = Gauge.builder(
+        "requests_in_queue_total",
+        java.util.function.Supplier { size() }
+    )
+        .description("Total number of payment requests in queue")
+        .tag("queue", "incoming rate limiter")
+        .register(Metrics.globalRegistry)
 }

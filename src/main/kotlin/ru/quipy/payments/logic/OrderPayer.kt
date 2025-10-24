@@ -58,13 +58,15 @@ class OrderPayer{
         val maxProcessingTime = paymentService.getAccountsProperties().minOf { p -> p.averageProcessingTime}
 
         val timeToProcessAllInQueue = ((linkedBlockingQueue.size.toDouble()) / canParallel) * (maxProcessingTime.toSeconds()+2) * 1000
+
+        val canRestInQueue =  maxProcessingTime.toSeconds() - 2.0
         val size = linkedBlockingQueue.size
         logger.info("Payment ${paymentId} for order $orderId created. timeToProcessAllInQueue $timeToProcessAllInQueue queueSize $size"  )
         if ((createdAt + timeToProcessAllInQueue ) > deadline)
         {
             logger.info("send too many requests becouse createdAt $createdAt + $timeToProcessAllInQueue > $deadline"  )
-            metrics.toManyRequestsDelayTime.record(timeToProcessAllInQueue.toLong(), TimeUnit.MILLISECONDS)
-            return Triple(createdAt,false,createdAt + timeToProcessAllInQueue.toLong())
+            metrics.toManyRequestsDelayTime2.record(timeToProcessAllInQueue.toLong(), TimeUnit.MILLISECONDS)
+            return Triple(createdAt,false,createdAt + (timeToProcessAllInQueue - canRestInQueue*1000).toLong())
         }
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
@@ -80,5 +82,10 @@ class OrderPayer{
             metrics.responceCounter.increment()
         }
         return Triple(createdAt,true,0)
+    }
+
+
+    fun getAccountsProperties() : List<PaymentAccountProperties> {
+        return paymentService.getAccountsProperties()
     }
 }

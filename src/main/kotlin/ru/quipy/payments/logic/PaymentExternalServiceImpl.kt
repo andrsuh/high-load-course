@@ -74,7 +74,6 @@ class PaymentExternalSystemAdapterImpl(
             metrics.rateLimiterQueueDurationTimer.record (Runnable {
                 rateLimiter.tickBlocking()
             })
-            logger.error("rate limiter пропустил: $paymentId")
             metrics.rateLimiterQueueCount.decrementAndGet()     
 
             if (checkDeadline(paymentId, transactionId, deadline)){
