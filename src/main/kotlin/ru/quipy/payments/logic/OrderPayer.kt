@@ -33,8 +33,8 @@ class OrderPayer(
     private val gauge = Gauge.builder("queue.size", linkedBlockingQueue) { it.size.toDouble() }.register(registry)
 
     private val paymentExecutor = ThreadPoolExecutor(
-        64,
-        64,
+        16,
+        16,
         0L,
         TimeUnit.SECONDS,
         linkedBlockingQueue,
@@ -44,10 +44,6 @@ class OrderPayer(
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-
-        if (linkedBlockingQueue.size >= 1660) {
-            throw RuntimeException("Too many orders")
-        }
 
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {

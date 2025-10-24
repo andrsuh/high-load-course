@@ -13,7 +13,6 @@ import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.TimeUnit
 
 @RestController
 class APIController(
@@ -30,12 +29,11 @@ class APIController(
     private lateinit var orderPayer: OrderPayer
 
 
-    private var rateLimiter =
-        LeakingBucketRateLimiter(
-            rate = 11L,
-            window = Duration.ofSeconds(1),
-            bucketSize = 11
-        )
+  private var rateLimiter = LeakingBucketRateLimiter(
+        rate = 11,
+        window = Duration.ofSeconds(1),
+        bucketSize = 11
+    )
 
     private val counter = Counter.builder("queries.amount").tag("name", "orders").register(registry)
     private val counterPayment = Counter.builder("queries.amount").tag("name", "payment").register(registry)
@@ -96,14 +94,7 @@ class APIController(
         } ?: throw IllegalArgumentException("No such order $orderId")
 
         counterPayment.increment()
-
-        var createdAt = 0L
-        try {
-            createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        } catch (e: RuntimeException) {
-            val timestamp = System.currentTimeMillis() + 1000
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", timestamp.toString()).build();
-        }
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
 
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
