@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service
 import org.springframework.web.client.HttpClientErrorException
 import org.testcontainers.shaded.org.bouncycastle.util.Integers
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import ru.quipy.common.utils.CompositeRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
@@ -32,20 +34,37 @@ class OrderPayer {
 
     private val maxQueueLength : Int = 11
     private val rateLimitPerSec : Long = 11
+    private val windowTime : java.time.Duration = java.time.Duration.ofSeconds(1)
     private val freeSpaceWaitTime : java.time.Duration = java.time.Duration.ofMinutes(0)
+
+    private val slidingWindowRateLimiter : SlidingWindowRateLimiter = SlidingWindowRateLimiter(
+        rateLimitPerSec,
+        windowTime
+    )
+
+    private val leakingBucketRateLimiter : LeakingBucketRateLimiter = LeakingBucketRateLimiter(
+        rateLimitPerSec,
+        windowTime,
+        maxQueueLength,
+    )
+    private val combinedLimiter : CompositeRateLimiter = CompositeRateLimiter(
+        leakingBucketRateLimiter,
+        slidingWindowRateLimiter
+    )
 
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(maxQueueLength),
+        LinkedBlockingQueue(6_000_000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler(freeSpaceWaitTime)
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
+
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(
