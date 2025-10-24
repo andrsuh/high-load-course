@@ -78,10 +78,14 @@ class APIController(
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
-        if (!rateLimiter.tick()){
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build();
-        }
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+//        if (!rateLimiter.tick()){
+//            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build();
+//        }
+        val createdAt =
+            orderPayer.processPayment(orderId, order.price, paymentId, deadline) ?: return ResponseEntity.status(
+                HttpStatus.TOO_MANY_REQUESTS
+            ).header("Retry-After", "100").build()
+
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
 

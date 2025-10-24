@@ -39,7 +39,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
     private val rateLimiter by lazy {
-        rateLimiterFactory.getRateLimiterForAccount(accountName, (rateLimitPerSec * 0.9).toInt())
+        rateLimiterFactory.getRateLimiterForAccount(accountName, (rateLimitPerSec * 1.0).toInt())
     }
     private val paymentExecutor = Executors.newFixedThreadPool(parallelRequests)
 
