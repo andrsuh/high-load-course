@@ -8,9 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import ru.quipy.common.utils.CompositeRateLimiter
-import ru.quipy.common.utils.SlidingWindowRateLimiter
-import ru.quipy.common.utils.TokenBucketRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.time.Duration
@@ -32,16 +30,13 @@ class APIController(
     private lateinit var orderPayer: OrderPayer
 
 
-    private var compositeRateLimiter =
-        CompositeRateLimiter(
-            SlidingWindowRateLimiter(rate = 11, Duration.ofSeconds(1)),
-            TokenBucketRateLimiter(
-                rate = 11,
-                bucketMaxCapacity = 158,
-                window = 1,
-                timeUnit = TimeUnit.SECONDS
-            )
+    private var rateLimiter =
+        LeakingBucketRateLimiter(
+            rate = 11L,
+            window = Duration.ofSeconds(1),
+            bucketSize = 11
         )
+
     private val counter = Counter.builder("queries.amount").tag("name", "orders").register(registry)
     private val counterPayment = Counter.builder("queries.amount").tag("name", "payment").register(registry)
 
@@ -88,7 +83,7 @@ class APIController(
 
 
         val timestamp = System.currentTimeMillis() + 2500
-        if (!compositeRateLimiter.tick()) {
+        if (!rateLimiter.tick()) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", timestamp.toString())
                 .build()
