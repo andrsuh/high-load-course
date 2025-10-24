@@ -45,9 +45,9 @@ class PaymentExternalSystemAdapterImpl(
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
-    
+
     private val parallelRequestSemaphore = Semaphore(parallelRequests)
-    
+
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = (rateLimitPerSec * 1.1).toLong(),
         window = Duration.ofSeconds(1)
@@ -75,7 +75,7 @@ class PaymentExternalSystemAdapterImpl(
         try {
             parallelRequestSemaphore.acquire()
             logger.debug("[$accountName] Acquired semaphore for payment $paymentId, available permits: ${parallelRequestSemaphore.availablePermits()}")
-            
+
             var currentAttempt = 1
             while (!rateLimiter.tick()) {
                 logger.debug("[$accountName] Rate limit hit for payment $paymentId, attempt $currentAttempt, micro-sleep...")
@@ -85,7 +85,7 @@ class PaymentExternalSystemAdapterImpl(
                     logger.info("[$accountName] Still waiting for rate limit for payment $paymentId, attempt $currentAttempt")
                 }
             }
-            
+
             executePaymentRequest(paymentId, transactionId, amount)
         } catch (e: InterruptedException) {
             logger.error("[$accountName] Interrupted while waiting for semaphore for payment $paymentId", e)
@@ -112,7 +112,7 @@ class PaymentExternalSystemAdapterImpl(
                     executePaymentRequest(paymentId, transactionId, amount, attempt + 1)
                     return
                 }
-                
+
                 if (!response.isSuccessful && attempt <= 3) {
                     logger.warn("[$accountName] Non-successful response ${response.code} for payment $paymentId, attempt $attempt, retrying...")
                     Thread.sleep(50)
