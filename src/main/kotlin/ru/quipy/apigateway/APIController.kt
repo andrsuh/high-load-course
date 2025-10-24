@@ -29,8 +29,8 @@ class APIController(
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    //Для третьего теста  private var rateLimiter = TokenBucketRateLimiter(11, 286, 1, TimeUnit.SECONDS)
-    private var rateLimiter = TokenBucketRateLimiter(11, 286, 1, TimeUnit.SECONDS)
+    //Для третьего теста  private var rateLimiter = TokenBucketRateLimiter(11, 284, 1, TimeUnit.SECONDS)
+    private var rateLimiter = TokenBucketRateLimiter(11, 11, 1, TimeUnit.SECONDS)
 
     private val counter = Counter.builder("queries.amount").tag("name", "orders").register(registry)
     private val counterPayment = Counter.builder("queries.amount").tag("name", "payment").register(registry)
@@ -76,8 +76,8 @@ class APIController(
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
         val paymentId = UUID.randomUUID()
 
-        // Для третьего теста меняем на 300
-        val timestamp = System.currentTimeMillis() + 300
+        // Для третьего теста меняем на 700
+        val timestamp = System.currentTimeMillis() + 950
         if (!rateLimiter.tick()) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", timestamp.toString())
