@@ -32,6 +32,7 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
 
         private const val DEFAULT_TARGET_UTILIZATION: Double = 0.8
+        private const val NO_TARGET_UTILIZATION: Double = 1.0
 
         private fun safeRps(limit: Int, targetUtilization: Double = 1.0): Int {
             require(limit > 0)
@@ -51,7 +52,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val safeRps = safeRps(rateLimitPerSec, 1.0)
+    private val safeRps = safeRps(rateLimitPerSec, NO_TARGET_UTILIZATION)
     private val rateLimiter = makeRateLimiter(accountName, safeRps)
     private val client = OkHttpClient
         .Builder()

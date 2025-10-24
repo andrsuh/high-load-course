@@ -1,15 +1,23 @@
 package ru.quipy.apigateway
 
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.web.bind.annotation.*
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
+import ru.quipy.apigateway.errors.TooManyRequestsException
+import ru.quipy.common.utils.RateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import java.util.*
+import java.util.UUID
 
 @RestController
-class APIController {
+class APIController(registry: MeterRegistry) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
@@ -18,6 +26,9 @@ class APIController {
 
     @Autowired
     private lateinit var orderPayer: OrderPayer
+
+    @Autowired
+    private lateinit var incomingRateLimiter: RateLimiter
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
@@ -36,6 +47,7 @@ class APIController {
             System.currentTimeMillis(),
             OrderStatus.COLLECTING,
             price,
+            0
         )
         return orderRepository.save(order)
     }
@@ -46,6 +58,7 @@ class APIController {
         val timeCreated: Long,
         val status: OrderStatus,
         val price: Int,
+        val attempt: Int
     )
 
     enum class OrderStatus {
@@ -58,10 +71,12 @@ class APIController {
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
-            orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
-            it
+            orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS, attempt = it.attempt + 1))
         } ?: throw IllegalArgumentException("No such order $orderId")
 
+        if (!incomingRateLimiter.tick()) {
+            throw TooManyRequestsException(order.id, order.attempt)
+        }
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         return PaymentSubmissionDto(createdAt, paymentId)
