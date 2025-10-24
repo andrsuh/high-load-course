@@ -32,18 +32,6 @@ class OrderPayer(
     private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(16_000)
     private val gauge = Gauge.builder("queue.size", linkedBlockingQueue) { it.size.toDouble() }.register(registry)
 
-
-    /* Для третьего теста меняем на
-    private val paymentExecutor = ThreadPoolExecutor(
-        64,
-        64,
-        0L,
-        TimeUnit.SECONDS,
-        linkedBlockingQueue,
-        NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
-    )
-     */
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,

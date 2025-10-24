@@ -8,12 +8,10 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.TokenBucketRateLimiter
 
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
 
@@ -31,7 +29,7 @@ class APIController(
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    //Для третьего теста private var rateLimiter = LeakingBucketRateLimiter(11, Duration.ofSeconds(1),158)
+    //Для третьего теста  private var rateLimiter = TokenBucketRateLimiter(11, 276, 1, TimeUnit.SECONDS)
     private var rateLimiter = TokenBucketRateLimiter(11, 11, 1, TimeUnit.SECONDS)
 
     private val counter = Counter.builder("queries.amount").tag("name", "orders").register(registry)
@@ -78,7 +76,7 @@ class APIController(
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
         val paymentId = UUID.randomUUID()
 
-        // Для третьего теста меняем на 700
+        // Для третьего теста меняем на 300
         val timestamp = System.currentTimeMillis() + 950
         if (!rateLimiter.tick()) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
