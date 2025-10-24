@@ -7,9 +7,14 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import ru.quipy.common.utils.CompositeRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.RateLimitExceededException
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.time.Duration
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -28,14 +33,31 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val queue = LinkedBlockingQueue<Runnable>(128)
+    private val queue = LinkedBlockingQueue<Runnable>(1200)
 
-    private val paymentExecutor = ThreadPoolExecutor(11, 11,
+    private val paymentExecutor = ThreadPoolExecutor(
+        16,
+        16,
         0L,
         TimeUnit.MILLISECONDS,
         queue,
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
+    )
+
+    val tokenBucket = TokenBucketRateLimiter(
+        rate = 11,
+        bucketMaxCapacity = 44,
+        window = 1,
+        timeUnit = TimeUnit.SECONDS
+    )
+    private val leakyBucket = LeakingBucketRateLimiter(
+        rate = 11,
+        window = Duration.ofSeconds(1),
+        bucketSize = 16
+    )
+    private val compositeLimiter = CompositeRateLimiter(
+        tokenBucket, leakyBucket
     )
 
     init {
@@ -56,6 +78,9 @@ class OrderPayer {
     }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+        if (!compositeLimiter.tick()) {
+            throw RateLimitExceededException()
+        }
         val createdAt = System.currentTimeMillis()
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
