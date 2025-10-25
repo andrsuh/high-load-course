@@ -18,10 +18,4 @@ class ApiExceptionHandler {
     fun handleRequestNotPermitted(ex: RequestNotPermitted) {
         logger.warn("Rate limit exceeded!", ex.message ?: "unknown")
     }
-
-    @ExceptionHandler(RateLimitExceededException::class)
-    @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
-    fun handleRateLimitExceeded(ex: RateLimitExceededException) {
-        logger.warn("Custom rate limit exceeded: {}", ex.message)
-    }
 }

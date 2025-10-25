@@ -1,8 +1,5 @@
 package ru.quipy.apigateway
 
-import io.github.bucket4j.BandwidthBuilder.BandwidthBuilderCapacityStage
-import io.github.bucket4j.Bucket
-import io.github.resilience4j.ratelimiter.annotation.RateLimiter
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -12,9 +9,7 @@ import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import java.time.Duration
 import java.util.*
-import java.util.function.Function
 
 @RestController
 class APIController {
@@ -65,7 +60,7 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
+    suspend fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
         val paymentId = UUID.randomUUID()
         logger.info("Start of payOrder()")
         val order = orderRepository.findById(orderId)?.let {
@@ -80,7 +75,7 @@ class APIController {
         }
         catch(ex: RateLimitExceededException) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "30")
+                //.header("Retry-After", 1000.toString())
                 .build()
         }
     }

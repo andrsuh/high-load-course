@@ -17,6 +17,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionHandler
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -33,7 +34,7 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val queue = LinkedBlockingQueue<Runnable>(1200)
+    private val queue = LinkedBlockingQueue<Runnable>(8_000)
 
     private val paymentExecutor = ThreadPoolExecutor(
         16,
@@ -45,21 +46,15 @@ class OrderPayer {
         CallerBlockingRejectedExecutionHandler()
     )
 
-    val tokenBucket = TokenBucketRateLimiter(
+    private val rate = 11
+    private val waitTime = 13
+    // test 2 - 126
+    // test 3 - 265
+    private val bucket = LeakingBucketRateLimiter(
         rate = 11,
-        bucketMaxCapacity = 44,
-        window = 1,
-        timeUnit = TimeUnit.SECONDS
+        bucketSize = 25,
+        window = Duration.ofSeconds(1)
     )
-    private val leakyBucket = LeakingBucketRateLimiter(
-        rate = 11,
-        window = Duration.ofSeconds(1),
-        bucketSize = 16
-    )
-    private val compositeLimiter = CompositeRateLimiter(
-        tokenBucket, leakyBucket
-    )
-
     init {
         Gauge.builder("payment.executor.queue.size") { queue.size.toDouble() }
             .description("Current number of tasks waiting in payment executor queue")
@@ -77,23 +72,23 @@ class OrderPayer {
             .register(Metrics.globalRegistry)
     }
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
-        if (!compositeLimiter.tick()) {
-            throw RateLimitExceededException()
-        }
+    suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        paymentExecutor.submit {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
-            }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+        val task = bucket.tick {
+            paymentExecutor.submit {
+                val createdEvent = paymentESService.create {
+                    it.create(
+                        paymentId,
+                        orderId,
+                        amount
+                    )
+                }
+                logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+
+                paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            }
         }
-        return createdAt
+        if (task) return createdAt else throw RateLimitExceededException()
     }
 }
