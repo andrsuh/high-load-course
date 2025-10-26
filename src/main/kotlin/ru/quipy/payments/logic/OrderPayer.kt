@@ -11,6 +11,8 @@ import ru.quipy.common.utils.CompositeRateLimiter
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.RateLimitExceededException
+import ru.quipy.common.utils.RateLimiter
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -50,11 +52,12 @@ class OrderPayer {
     private val waitTime = 13
     // test 2 - 126
     // test 3 - 265
-    private val bucket = LeakingBucketRateLimiter(
+    /*private val bucket = LeakingBucketRateLimiter(
         rate = 11,
         bucketSize = 25,
         window = Duration.ofSeconds(1)
-    )
+    )*/
+    private val slidingWindowRateLimiter = SlidingWindowRateLimiter(11, Duration.ofSeconds(1))
     init {
         Gauge.builder("payment.executor.queue.size") { queue.size.toDouble() }
             .description("Current number of tasks waiting in payment executor queue")
@@ -74,8 +77,10 @@ class OrderPayer {
 
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-
-        val task = bucket.tick {
+        if (!slidingWindowRateLimiter.tick()) {
+            throw RateLimitExceededException()
+        }
+        //val task = bucket.tick {
             paymentExecutor.submit {
                 val createdEvent = paymentESService.create {
                     it.create(
@@ -88,7 +93,8 @@ class OrderPayer {
 
                 paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
             }
-        }
-        if (task) return createdAt else throw RateLimitExceededException()
+        //}
+        //if (task) return createdAt else throw RateLimitExceededException()
+        return createdAt
     }
 }
