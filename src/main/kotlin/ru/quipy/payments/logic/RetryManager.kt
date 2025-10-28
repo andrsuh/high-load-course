@@ -5,7 +5,7 @@ import kotlin.random.Random
 
 class RetryManager(
     private val maxRetries: Int,
-    private val backoffFactor: Double = 2.0,
+    private val backoffFactor: Double = 1.0,
     private val jitterMillis: Long = 50L,
     private val avgProcessingTime: Long = 1000L
 ) {

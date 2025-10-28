@@ -24,6 +24,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.log2
 import kotlin.math.min
 
 
@@ -157,18 +158,20 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         val retryManager = RetryManager(
-            maxRetries = 3,
+            maxRetries = 5,
             backoffFactor = 2.0,
             jitterMillis = 0,
-            avgProcessingTime = (requestAverageProcessingTime.toMillis()*1.05).toLong()
+            avgProcessingTime = (requestAverageProcessingTime.toMillis() * 1.05).toLong()
         )
 
         var lastError: Exception? = null
+        var shouldContinue = true
 
-        while (retryManager.shouldRetry(now(), deadline)) {
+        while (retryManager.shouldRetry(now(), deadline) && shouldContinue) {
             try {
                 client.newCall(request).execute().use { response ->
                     val respBodyStr = response.body?.string() ?: ""
+
                     val body = try {
                         mapper.readValue(respBodyStr, ExternalSysResponse::class.java)
                     } catch (e: Exception) {
@@ -183,10 +186,18 @@ class PaymentExternalSystemAdapterImpl(
                     }
 
                     if (body.result) {
+                        shouldContinue = false
                         return
                     } else {
                         lastError = Exception(body.message)
-                        retryManager.onFailure()
+
+                        when (response.code) {
+                            429, 500, 502, 503, 504 -> retryManager.onFailure()
+                            else -> {
+                                logger.warn("[$accountName] Non-retriable HTTP error ${response.code} for txId: $transactionId")
+                                shouldContinue = false
+                            }
+                        }
                     }
                 }
             } catch (e: SocketTimeoutException) {
@@ -200,18 +211,21 @@ class PaymentExternalSystemAdapterImpl(
             }
         }
 
-        val reason = when {
-            now() >= deadline -> "Deadline exceeded."
-            lastError != null -> lastError.message ?: "Unknown error"
-            else -> "Payment failed after retries."
-        }
+        if (!shouldContinue) {
+            val reason = when {
+                now() >= deadline -> "Deadline exceeded."
+                lastError != null -> lastError.message ?: "Unknown error"
+                else -> "Payment failed after retries."
+            }
 
-        paymentESService.update(paymentId) {
-            it.logProcessing(false, now(), transactionId, reason = reason)
-        }
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = reason)
+            }
 
-        logger.error("[$accountName] Payment failed after retries for txId: $transactionId, payment: $paymentId — reason: $reason")
+            logger.error("[$accountName] Payment failed after retries for txId: $transactionId, payment: $paymentId — reason: $reason")
+        }
     }
+
 
     override fun price() = properties.price
 
