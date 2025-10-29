@@ -6,15 +6,12 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
-import ru.quipy.common.utils.TokenBucketRateLimiter
-import ru.quipy.payments.logic.TooManyRequestsException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeUnit.SECONDS
 
 @Service
 class OrderPayer {
@@ -29,12 +26,7 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val ingressRateLimiter = TokenBucketRateLimiter(
-        rate = 11,           
-        bucketMaxCapacity = 16,
-        window = 1,
-        timeUnit = SECONDS,
-    )
+    // Ingress rate limiter removed: rely on provider-side limiter to ensure 11 rps utilization
 
     private val paymentExecutor = ThreadPoolExecutor(
         16,
@@ -47,11 +39,7 @@ class OrderPayer {
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
-        if (!ingressRateLimiter.tick()) {
-            val waitMs = ingressRateLimiter.estimateWaitTimeMillis()
-            val seconds = kotlin.math.max(1L, kotlin.math.ceil(waitMs / 1000.0).toLong())
-            throw TooManyRequestsException(retryAfterSeconds = seconds)
-        }
+        // No ingress throttling: allow submission; provider adapter enforces true rate limit
 
         val createdAt = System.currentTimeMillis()
         val future = paymentExecutor.submit {
