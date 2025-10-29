@@ -46,7 +46,11 @@ class PaymentExternalSystemAdapterImpl(
     private val semaphoreToLimitParallelRequest = OngoingWindow(parallelRequests)
     private val slidingWindowRateLimiter =
         SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    private val retryAfterMillis: Long = (((requestAverageProcessingTime.toMillis().toDouble()) / 2.0) * (rateLimitPerSec / 7.0)).toLong().coerceAtLeast(500L)
+    // Тут мы рассчитываем задержку между попытками
+    // averageProcessingTime = 7, rateLimitPerSec = 10, external rate = 7
+    // requestAverageProcessingTime.toMillis().toDouble()) / 2.0 - среднее время обработки одного запроса (7000 мс = 7 секунд), взяли половину 3.5 секунды, чтобы не ждать слишком долго
+    // rateLimitPerSec / 7.0 - В зависимости от лимита запросов в секунду будем менять - если лимит высокий (rateLimitPerSec большой) - множитель растёт и тогда задержка увеличивается
+    private val retryAfterMillis: Long = (((requestAverageProcessingTime.toMillis().toDouble()) / 2.0) * (rateLimitPerSec / 7.0)).toLong()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         try {
@@ -67,6 +71,7 @@ class PaymentExternalSystemAdapterImpl(
 
                 var attempt = 1
                 var success = false
+                // Максимум три попытки, чтобы не пытаться бесконечно решить не работающий запрос
                 while (attempt <= 3 && !success) {
                     try {
                         val request = Request.Builder().run {
@@ -116,6 +121,7 @@ class PaymentExternalSystemAdapterImpl(
                             }
                         }
                         if (attempt < 3) {
+                            // Вот тут говорим через сколько повторить
                             Thread.sleep(retryAfterMillis)
                         }
                     }
