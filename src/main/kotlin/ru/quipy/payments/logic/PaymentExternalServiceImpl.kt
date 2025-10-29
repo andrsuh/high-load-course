@@ -46,6 +46,8 @@ class PaymentExternalSystemAdapterImpl(
     private val semaphoreToLimitParallelRequest = OngoingWindow(parallelRequests)
     private val slidingWindowRateLimiter =
         SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val retryAfterMillis: Long = (((requestAverageProcessingTime.toMillis().toDouble()) / 2.0) * (rateLimitPerSec / 7.0)).toLong().coerceAtLeast(500L)
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         try {
             semaphoreToLimitParallelRequest.acquire()
@@ -63,19 +65,22 @@ class PaymentExternalSystemAdapterImpl(
 
                 logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-                try {
-                    val request = Request.Builder().run {
-                        url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-                        post(emptyBody)
-                    }.build()
+                var attempt = 1
+                var success = false
+                while (attempt <= 3 && !success) {
+                    try {
+                        val request = Request.Builder().run {
+                            url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+                            post(emptyBody)
+                        }.build()
 
-                    client.newCall(request).execute().use { response ->
-                        val body = try {
-                            mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                        } catch (e: Exception) {
-                            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                            ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
-                        }
+                        client.newCall(request).execute().use { response ->
+                            val body = try {
+                                mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                            } catch (e: Exception) {
+                                logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                            }
 
                         logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
@@ -85,24 +90,36 @@ class PaymentExternalSystemAdapterImpl(
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
                         }
                         counter.increment()
-                    }
-                } catch (e: Exception) {
-                    when (e) {
-                        is SocketTimeoutException -> {
-                            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+
+                            if (body.result) {
+                                success = true
+                            } else if (attempt < 3) {
+                                logger.warn("[$accountName] Retry #$attempt for payment $paymentId after ${retryAfterMillis}ms")
+                                Thread.sleep(retryAfterMillis)
                             }
                         }
+                    } catch (e: Exception) {
+                        when (e) {
+                            is SocketTimeoutException -> {
+                                logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                                paymentESService.update(paymentId) {
+                                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                                }
+                            }
 
-                        else -> {
-                            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                            else -> {
+                                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(false, now(), transactionId, reason = e.message)
+                                paymentESService.update(paymentId) {
+                                    it.logProcessing(false, now(), transactionId, reason = e.message)
+                                }
                             }
                         }
+                        if (attempt < 3) {
+                            Thread.sleep(retryAfterMillis)
+                        }
                     }
+                    attempt++
                 }
             } finally {
                 semaphoreToLimitParallelRequest.release()
