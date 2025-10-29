@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.TokenBucketRateLimiter
-import ru.quipy.common.web.TooManyRequestsException
+import ru.quipy.payments.logic.TooManyRequestsException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
@@ -49,7 +49,8 @@ class OrderPayer {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         if (!ingressRateLimiter.tick()) {
             val waitMs = ingressRateLimiter.estimateWaitTimeMillis()
-            throw TooManyRequestsException(retryAfterMillis = waitMs)
+            val seconds = kotlin.math.max(1L, kotlin.math.ceil(waitMs / 1000.0).toLong())
+            throw TooManyRequestsException(retryAfterSeconds = seconds)
         }
 
         val createdAt = System.currentTimeMillis()

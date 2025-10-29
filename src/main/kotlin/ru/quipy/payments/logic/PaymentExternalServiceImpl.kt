@@ -25,7 +25,7 @@ class TooManyRequestsException(
 ) : RuntimeException(message)
 
 @ControllerAdvice
-class GlobalExceptionHandler {
+class PaymentsGlobalExceptionHandler {
     @ExceptionHandler(TooManyRequestsException::class)
     fun handleTooManyRequestsException(ex: TooManyRequestsException): ResponseEntity<String> {
         return ResponseEntity
