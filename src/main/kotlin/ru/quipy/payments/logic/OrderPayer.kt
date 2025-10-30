@@ -73,6 +73,7 @@ class OrderPayer(
         val averageProcessingTime = avgTimeKeeper.getAverage()
 
         val maxProcessingTime = averageProcessingTime * 1.5
+        // TODO: поправить коэффициент из нормального распределения
 
         val queueProcessingTime = (paymentTaskQueue.size + backgroundWorkers) * maxProcessingTime / backgroundWorkers
 
