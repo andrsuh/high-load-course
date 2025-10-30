@@ -70,7 +70,7 @@ class APIController {
 
         if (!limiter.tick()) {
             throw ResponseStatusException(
-                HttpStatus.TOO_MANY_REQUESTS,
+                HttpStatus.FORBIDDEN,
                 "Rate limit exceeded. Try again later."
             )
         }
