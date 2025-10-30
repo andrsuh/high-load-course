@@ -57,30 +57,32 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
-            semaphore.acquire()
-            try {
 
-                val request = Request.Builder().run {
-                    url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-                    post(emptyBody)
-                }.build()
+            if (!limiter.tick()) {
+                throw ResponseStatusException(
+                    HttpStatus.TOO_MANY_REQUESTS,
+                    "Rate limit exceeded. Try again later."
+                )
+            }
 
-                client.newCall(request).execute().use { response ->
-                    val body = try {
-                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-                    }
+            val request = Request.Builder().run {
+                url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+                post(emptyBody)
+            }.build()
 
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                    }
+            client.newCall(request).execute().use { response ->
+                val body = try {
+                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                } catch (e: Exception) {
+                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
-            } finally {
-                semaphore.release()
+
+                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+                paymentESService.update(paymentId) {
+                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                }
             }
         } catch (e: Exception) {
             when (e) {
