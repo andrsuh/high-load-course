@@ -62,24 +62,12 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-         val maxQueueLength : Int = 11
          val rateLimitPerSec : Long = 11
          val windowTime : java.time.Duration = java.time.Duration.ofSeconds(1)
-         val freeSpaceWaitTime : java.time.Duration = java.time.Duration.ofMinutes(0)
 
-        val slidingWindowRateLimiter : SlidingWindowRateLimiter = SlidingWindowRateLimiter(
+        val slidingWindowRateLimiter = SlidingWindowRateLimiter(
             rateLimitPerSec,
             windowTime
-        )
-
-        val leakingBucketRateLimiter : LeakingBucketRateLimiter = LeakingBucketRateLimiter(
-            rateLimitPerSec,
-            windowTime,
-            maxQueueLength,
-        )
-        val combinedLimiter : CompositeRateLimiter = CompositeRateLimiter(
-            leakingBucketRateLimiter,
-            slidingWindowRateLimiter
         )
 
         if (!slidingWindowRateLimiter.tick()) {

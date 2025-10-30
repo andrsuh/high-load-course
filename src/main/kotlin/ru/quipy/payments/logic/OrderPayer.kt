@@ -28,15 +28,6 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val rateLimitPerSec : Long = 11
-    private val windowTime : java.time.Duration = java.time.Duration.ofSeconds(1)
-    private val freeSpaceWaitTime : java.time.Duration = java.time.Duration.ofMinutes(0)
-
-    private val slidingWindowRateLimiter : SlidingWindowRateLimiter = SlidingWindowRateLimiter(
-        rateLimitPerSec,
-        windowTime
-    )
-
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -44,15 +35,11 @@ class OrderPayer {
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(6_000_000),
         NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler(freeSpaceWaitTime)
+        CallerBlockingRejectedExecutionHandler()
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-
-        if (!slidingWindowRateLimiter.tick()){
-            throw RejectedExecutionException("Too many requests")
-        }
 
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
