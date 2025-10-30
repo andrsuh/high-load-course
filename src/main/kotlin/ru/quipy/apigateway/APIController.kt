@@ -9,8 +9,10 @@ import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.*
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import java.time.Duration.ofMillis
 import java.time.Duration.ofSeconds
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 @RestController
 class APIController {
@@ -23,6 +25,11 @@ class APIController {
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
+    private val retryCounters = ConcurrentHashMap<UUID, Pair<Int, Long>>()
+    private val maxRetries = 2
+    private val retryWindowMs = 60_000L
+
+
     private val slidingWindow = SlidingWindowRateLimiter(
         rate = 10,
         window = ofSeconds(1)
@@ -30,8 +37,8 @@ class APIController {
     
     private val leakingBucket = LeakingBucketRateLimiter(
         rate = 10,
-        bucketSize = 40,
-        window = ofSeconds(1)
+        bucketSize = 38,
+        window = ofMillis(1000)
     )
     
     private val compositeRateLimiter = CompositeRateLimiter(
@@ -77,12 +84,39 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<*> {
-        if (!compositeRateLimiter.tick()) {
-            logger.debug("Rate limit exceeded for payment request")
+        val now = System.currentTimeMillis()
 
+        val (count, lastTime) = retryCounters[orderId] ?: (0 to now)
+        if (now - lastTime > retryWindowMs) {
+            retryCounters[orderId] = (1 to now)
+        } else if (count >= maxRetries) {
+            logger.debug("Too many retries for order $orderId")
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "0")
-                .body(mapOf("error" to "Rate limit exceeded"))
+                .body(mapOf("error" to "Too many retries for order $orderId"))
+        } else {
+            retryCounters[orderId] = (count + 1 to now)
+        }
+
+        val remaining = deadline - now
+        val avgProcessingMs = 700L
+        if (remaining < avgProcessingMs) {
+            logger.debug("Deadline too close, skipping payment for order $orderId (remaining=$remaining ms)")
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(mapOf("error" to "Deadline too close — payment no longer meaningful"))
+        }
+
+        if (!compositeRateLimiter.tick()) {
+            logger.debug("Rate limit exceeded for payment request of $orderId")
+
+            val retryAfterMs = 500L
+            return if (remaining > avgProcessingMs + retryAfterMs) {
+                ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header("X-Retry-After-Ms", retryAfterMs.toString())
+                    .body(mapOf("error" to "Rate limit exceeded, retry after $retryAfterMs ms"))
+            } else {
+                ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(mapOf("error" to "Rate limit exceeded and deadline too close"))
+            }
         }
 
         val paymentId = UUID.randomUUID()
@@ -95,6 +129,7 @@ class APIController {
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
+
 
     class PaymentSubmissionDto(
         val timestamp: Long,
