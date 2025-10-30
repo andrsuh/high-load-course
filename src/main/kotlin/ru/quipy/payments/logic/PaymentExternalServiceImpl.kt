@@ -58,13 +58,6 @@ class PaymentExternalSystemAdapterImpl(
 
         try {
 
-            if (!limiter.tick()) {
-                throw ResponseStatusException(
-                    HttpStatus.TOO_MANY_REQUESTS,
-                    "Rate limit exceeded. Try again later."
-                )
-            }
-
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
