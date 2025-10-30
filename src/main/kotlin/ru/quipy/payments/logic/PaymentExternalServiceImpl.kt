@@ -5,6 +5,8 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
@@ -24,9 +26,9 @@ class PaymentExternalSystemAdapterImpl(
 ) : PaymentExternalSystemAdapter {
 
     companion object {
-        val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
+        val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
 
-        val emptyBody = RequestBody.create(null, ByteArray(0))
+        val emptyBody = ByteArray(0).toRequestBody(null)
         val mapper = ObjectMapper().registerKotlinModule()
     }
 
@@ -42,6 +44,7 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        val now = now()
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -50,6 +53,27 @@ class PaymentExternalSystemAdapterImpl(
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        }
+
+        val expectedCompletionTime = now + requestAverageProcessingTime.toMillis()
+
+        if (expectedCompletionTime >= deadline) {
+            val remaining = deadline - now
+            logger.warn(
+                "[$accountName] Skipping payment $paymentId (txId=$transactionId): " +
+                        "remaining ${remaining}ms < avg processing ${requestAverageProcessingTime.toMillis()}ms, " +
+                        "deadline = $deadline, now = $now"
+            )
+
+            paymentESService.update(paymentId) {
+                it.logProcessing(
+                    success = false,
+                    processedAt = now(),
+                    transactionId = transactionId,
+                    reason = "Deadline too close (${remaining}ms left, avg processing ${requestAverageProcessingTime.toMillis()}ms)"
+                )
+            }
+            return
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
