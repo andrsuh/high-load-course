@@ -12,6 +12,7 @@ import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import java.time.Duration
 import java.util.*
 
 @RestController
@@ -21,6 +22,8 @@ class APIController {
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
+
+    private val limiter = SlidingWindowRateLimiter(11, Duration.ofSeconds(1))
 
     @Autowired
     private lateinit var orderPayer: OrderPayer
@@ -65,12 +68,7 @@ class APIController {
          val rateLimitPerSec : Long = 11
          val windowTime : java.time.Duration = java.time.Duration.ofSeconds(1)
 
-        val slidingWindowRateLimiter = SlidingWindowRateLimiter(
-            rateLimitPerSec,
-            windowTime
-        )
-
-        if (!slidingWindowRateLimiter.tick()) {
+        if (!limiter.tick()) {
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
                 "Rate limit exceeded. Try again later."
