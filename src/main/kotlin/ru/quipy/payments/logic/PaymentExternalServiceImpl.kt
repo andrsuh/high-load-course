@@ -31,9 +31,6 @@ class PaymentExternalSystemAdapterImpl(
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
 
-        private const val DEFAULT_TARGET_UTILIZATION: Double = 0.8
-        private const val NO_TARGET_UTILIZATION: Double = 1.0
-
         private fun safeRps(limit: Int, targetUtilization: Double = 1.0): Int {
             require(limit > 0)
             require(targetUtilization > 0 && targetUtilization <= 1)
@@ -52,7 +49,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val safeRps = safeRps(rateLimitPerSec, NO_TARGET_UTILIZATION)
+    private val safeRps = safeRps(rateLimitPerSec, 1.0)
     private val rateLimiter = makeRateLimiter(accountName, safeRps)
     private val client = OkHttpClient
         .Builder()
@@ -84,20 +81,33 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            client.newCall(request).execute().use { response ->
-                val body = try {
-                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
-                }
+            var needToCall = true
+            while (needToCall) {
+                needToCall = false
+                client.newCall(request).execute().use { response ->
+                    val body = try {
+                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                    } catch (e: Exception) {
+                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                    }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                    // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+                    // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(
+                            body.result,
+                            now(),
+                            transactionId,
+                            reason = body.message
+                        )
+                    }
+
+                    if (!body.result && body.message == "Temporary error" && deadline - now() > requestAverageProcessingTime.toMillis()) {
+                        needToCall = true
+                    }
                 }
             }
         } catch (e: Exception) {
