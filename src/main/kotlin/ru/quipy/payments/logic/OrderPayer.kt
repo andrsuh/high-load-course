@@ -32,8 +32,8 @@ class OrderPayer(
     private lateinit var paymentService: PaymentService
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        11,
+        11,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(8_000),
@@ -46,7 +46,7 @@ class OrderPayer(
         .register(meterRegistry)
 
     private val slidingWindowLimiter = SlidingWindowRateLimiter(
-        rate = 11,
+        rate = 10,
         window = Duration.ofSeconds(1)
     )
 
