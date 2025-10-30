@@ -65,7 +65,7 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-         val rateLimitPerSec : Long = 11
+         val rateLimitPerSec : Long = 20
          val windowTime : java.time.Duration = java.time.Duration.ofSeconds(1)
 
         if (!limiter.tick()) {
