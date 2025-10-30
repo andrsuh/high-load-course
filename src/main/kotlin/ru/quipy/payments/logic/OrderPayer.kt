@@ -9,6 +9,7 @@ import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.time.Duration
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
@@ -28,14 +29,17 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private var queueWaitingTime = Duration.ofSeconds(0)
+    private var queueLength = 16
+
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(6_000_000),
+        LinkedBlockingQueue(queueLength),
         NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
+        CallerBlockingRejectedExecutionHandler(queueWaitingTime)
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {

@@ -46,7 +46,7 @@ class PaymentExternalSystemAdapterImpl(
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
-        limiter.tickBlocking()
+        // limiter.tickBlocking()
 
         val transactionId = UUID.randomUUID()
 
