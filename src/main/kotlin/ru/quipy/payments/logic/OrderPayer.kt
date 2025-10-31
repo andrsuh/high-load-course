@@ -6,9 +6,15 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.apigateway.TooManyRequestsError
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import ru.quipy.common.utils.CompositeRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.config.PaymentAccountsConfig
+import java.time.Duration
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -32,14 +38,21 @@ class OrderPayer {
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(64),
+        LinkedBlockingQueue(8000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
 
+    private val rateLimiter = TokenBucketRateLimiter(
+        rate = 20,
+        bucketMaxCapacity = 210,
+        window = 1,
+        timeUnit = TimeUnit.SECONDS
+    )
+
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
-        if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw TooManyRequestsError(1000)
+        if (!rateLimiter.tick()) {
+            throw TooManyRequestsError(1000);
         }
 
         val createdAt = System.currentTimeMillis()

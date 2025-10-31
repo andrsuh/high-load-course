@@ -6,6 +6,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.apigateway.TooManyRequestsError
+import ru.quipy.common.utils.CompositeRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
