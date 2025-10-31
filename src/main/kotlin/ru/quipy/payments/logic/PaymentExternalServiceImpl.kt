@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import ru.quipy.payments.logic.PaymentRateLimiterFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.io.IOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -75,51 +76,82 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        try {
-            val request = Request.Builder().run {
-                url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-                post(emptyBody)
-            }.build()
+        var finalSuccess = false
+        var finalMessage: String? = null
 
-            client.newCall(request).execute().use { response ->
-                val body = try {
-                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+        val maxAttempts = 3
+        val baseDelayMs = 700L
+        val maxDelayMs = 2_000L
+
+        var attempt = 0
+        while (true) {
+            attempt += 1
+            try {
+                val request = Request.Builder().run {
+                    url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+                    post(emptyBody)
+                }.build()
+
+                client.newCall(request).execute().use { response ->
+                    val code = response.code
+                    // Retry only on transient HTTP statuses
+                    if (code == 429 || code == 500 || code == 502 || code == 503  || code == 504) {
+                    val retryAfter = response.header("Retry-After")?.toLongOrNull()?.times(1000)
+                    val delay = retryAfter ?: computeDelayMillis(attempt, baseDelayMs, maxDelayMs)
+                    if (!shouldRetry(attempt, maxAttempts, deadline, delay)) {
+                        finalSuccess = false
+                        finalMessage = "HTTP $code"
+                        break
+                    }
+                    logger.warn("[$accountName] HTTP $code for $paymentId (attempt $attempt), retrying in ${delay}ms")
+                    Thread.sleep(adjustDelayToDeadline(delay, deadline))
+                    continue
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                    val body = try {
+                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                    } catch (e: Exception) {
+                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                    }
 
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+                    finalSuccess = body.result
+                    finalMessage = body.message
                 }
-
-                if (body.result) {
-                    metricsReporter.incrementCompleted()
+            } catch (e: Exception) {
+                val retryable = e is SocketTimeoutException || e is IOException
+                if (retryable) {
+                    val delay = computeDelayMillis(attempt, baseDelayMs, maxDelayMs)
+                    if (!shouldRetry(attempt, maxAttempts, deadline, delay)) {
+                        logger.error("[$accountName] Payment retry attempts exhausted for txId: $transactionId, payment: $paymentId. Last error: ${e.message}")
+                        finalSuccess = false
+                        finalMessage = e.message ?: "Request timeout."
+                        break
+                    }
+                    logger.warn("[$accountName] Transient error on attempt $attempt for payment $paymentId: ${e.message}. Retrying in ${delay}ms")
+                    Thread.sleep(adjustDelayToDeadline(delay, deadline))
+                    continue
                 } else {
-                    metricsReporter.incrementFailed()
-                }
-            }
-        } catch (e: Exception) {
-            when (e) {
-                is SocketTimeoutException -> {
-                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                    }
-                }
-
-                else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
+                    finalSuccess = false
+                    finalMessage = e.message
                 }
             }
+
+            if (finalSuccess || attempt >= maxAttempts) {
+                break
+            }
+        }
+
+        paymentESService.update(paymentId) {
+            it.logProcessing(finalSuccess, now(), transactionId, reason = finalMessage)
+        }
+
+        if (finalSuccess) {
+            metricsReporter.incrementCompleted()
+        } else {
             metricsReporter.incrementFailed()
         }
     }
@@ -132,3 +164,21 @@ class PaymentExternalSystemAdapterImpl(
 }
 
 fun now() = System.currentTimeMillis()
+
+private fun computeDelayMillis(attempt: Int, baseDelayMs: Long, maxDelayMs: Long): Long {
+    val exp = baseDelayMs * (1L shl (attempt - 1).coerceAtLeast(1))
+    val capped = exp.coerceAtMost(maxDelayMs)
+    val jitter = 0.8 + Math.random() * 0.4
+    return (capped * jitter).toLong()
+}
+
+private fun shouldRetry(attempt: Int, maxAttempts: Int, deadline: Long, delayMs: Long): Boolean {
+    if (attempt >= maxAttempts) return false
+    val remaining = deadline - now()
+    return remaining > delayMs
+}
+
+private fun adjustDelayToDeadline(delayMs: Long, deadline: Long): Long {
+    val remaining = deadline - now()
+    return if (remaining <= 0) 0 else Math.min(delayMs, remaining)
+}
