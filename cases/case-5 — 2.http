@@ -4,7 +4,7 @@ Content-Type: application/json
 
 {
   "serviceName": "AcDc",
-  "token": "m2maxfs2763AC10gGp",
+  "token": "",
   "ratePerSecond": 11,
   "testCount": 2200,
   "processingTimeMillis": 13000,
