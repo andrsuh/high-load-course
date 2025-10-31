@@ -48,7 +48,7 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     private val client = OkHttpClient.Builder()
-        .connectionPool(ConnectionPool(optimalThreads * 2, 5, TimeUnit.MINUTES))  // 128 connections для acc-23
+        .connectionPool(ConnectionPool(optimalThreads * 2, 5, TimeUnit.MINUTES))
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
@@ -149,7 +149,6 @@ class PaymentExternalSystemAdapterImpl(
             }.build()
 
             client.newCall(request).execute().use { response ->
-                // Обработка 429 (Too Many Requests) с проверкой deadline
                 if (response.code == 429 && attempt <= 10) {
                     if (now() >= deadline) {
                         paymentESService.update(paymentId) {
@@ -164,7 +163,6 @@ class PaymentExternalSystemAdapterImpl(
                 }
 
                 if (!response.isSuccessful && attempt <= 3) {
-                    // ПРОВЕРКА deadline перед retry!
                     if (now() >= deadline) {
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Retry aborted - deadline expired")
