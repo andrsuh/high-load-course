@@ -16,6 +16,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import kotlin.math.pow
 
 
 // Advice: always treat time as a Duration
@@ -57,6 +58,10 @@ class PaymentExternalSystemAdapterImpl(
         return true
     }
 
+    private val retryCount = 4
+    private val maxDelay = 2000L
+    private val baseDelay = 200L
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
         submittedCounter.increment()
@@ -80,9 +85,8 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         try {
+
             var x = 0
-            val retryCount = 3
-            val pause = 750L
             while (x < retryCount) {
                 x++
                 val request = Request.Builder().run {
@@ -112,7 +116,7 @@ class PaymentExternalSystemAdapterImpl(
                     }
                     if (body.result || (x == retryCount))
                         break
-                    Thread.sleep(pause)
+                    Thread.sleep(exponentialBackoffDelay(x))
                 }
             }
         } catch (e: Exception) {
@@ -141,6 +145,9 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
+    private fun exponentialBackoffDelay(attempt: Int): Long {
+        return minOf((baseDelay * 2.0.pow((attempt - 1).toDouble())).toLong(), maxDelay)
+    }
 }
 
 public fun now() = System.currentTimeMillis()
