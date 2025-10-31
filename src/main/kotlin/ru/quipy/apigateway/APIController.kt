@@ -67,16 +67,14 @@ class APIController(
         val now = System.currentTimeMillis()
 
         if (!incomingPaymentRateLimiter.tick()) {
-            // RFC 7231: Retry-After in SECONDS (delay-seconds format)
-            // Token available every ~91ms (1000ms / 11 RPS)
-            // Use 0 seconds = immediate retry for maximum throughput
-            throw TooManyRequestsException("Rate limit exceeded. Retry-After: 0")
+            val retryAfterMs = (1000.0 / 11).toInt()
+            throw TooManyRequestsException("Rate limit exceeded. Retry-After: $retryAfterMs")
         }
 
         if (!orderPayer.canAcceptRequest()) {
-            // RFC 7231: Retry-After in SECONDS (delay-seconds format)
-            // Use 0 seconds = immediate retry
-            throw TooManyRequestsException("System overloaded. Current queue: ${orderPayer.getQueueSize()}. Retry-After: 0")
+            val queueSize = orderPayer.getQueueSize()
+            val retryAfterMs = minOf(500, 50 + queueSize * 5)
+            throw TooManyRequestsException("System overloaded. Current queue: $queueSize. Retry-After: $retryAfterMs")
         }
 
         val paymentId = UUID.randomUUID()

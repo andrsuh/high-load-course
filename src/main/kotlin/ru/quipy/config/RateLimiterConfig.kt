@@ -31,7 +31,7 @@ class RateLimiterConfig {
 
     @Bean
     fun incomingPaymentRateLimiter(
-        @Value("\${incoming.rate.strategy:SLIDING_WINDOW}") strategy: String,
+        @Value("\${incoming.rate.strategy:TOKEN_BUCKET}") strategy: String,
         @Value("\${incoming.rate.limit:11}") rateLimit: Int,
         @Value("\${incoming.rate.bucket.capacity:110}") bucketCapacity: Int
     ): RateLimiter {

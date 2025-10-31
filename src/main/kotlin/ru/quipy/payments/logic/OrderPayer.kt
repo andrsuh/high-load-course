@@ -25,7 +25,7 @@ class OrderPayer {
 
     private val activeRequestsCount = AtomicInteger(0)
 
-    private val maxConcurrentRequests = 100
+    private val maxConcurrentRequests = 180
 
     @PostConstruct
     fun init() {
