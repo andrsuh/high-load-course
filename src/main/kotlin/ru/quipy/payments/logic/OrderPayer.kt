@@ -31,7 +31,7 @@ class OrderPayer {
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(320), // rps external * wait limit
+        LinkedBlockingQueue(8000),
         NamedThreadFactory("payment-submission-executor"),
         ThreadPoolExecutor.DiscardOldestPolicy() // даём дорогу молодым потокам
     )
