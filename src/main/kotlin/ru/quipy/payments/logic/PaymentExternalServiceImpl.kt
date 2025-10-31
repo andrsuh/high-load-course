@@ -82,7 +82,7 @@ class PaymentExternalSystemAdapterImpl(
         try {
             var x = 0
             val retryCount = 3
-            var pause = 300L
+            var pause = 500L
             while (x < retryCount) {
                 x++
                 val request = Request.Builder().run {
@@ -112,9 +112,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                     if (body.result || (x == retryCount))
                         break
-                    else
-                        pause *= 2
-                        Thread.sleep(pause)
+                    Thread.sleep(pause)
+                    pause *= 2
                 }
             }
         } catch (e: Exception) {
