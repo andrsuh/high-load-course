@@ -1,0 +1,17 @@
+### КЕЙС 1: Тест для аккаунта acc-3
+### ⚠️  ВАЖНО: ПЕРЕД ЗАПУСКОМ ТЕСТА ЗАПУСТИТЕ ПРИЛОЖЕНИЕ С АККАУНТОМ acc-3:
+### export PAYMENT_ACCOUNTS=acc-3 && mvn spring-boot:run
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 11,
+  "testCount": 1200,
+  "processingTimeMillis": 80000
+}
+
+### Stop running test to save time and resources
+# @timeout 120
+POST http://localhost:1234/test/stop/{{serviceName}}
