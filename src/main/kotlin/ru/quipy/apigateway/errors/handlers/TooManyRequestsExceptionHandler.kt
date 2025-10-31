@@ -20,8 +20,8 @@ class TooManyRequestsExceptionHandler {
     fun handleRejectedExecutionException(e: TooManyRequestsException): ResponseEntity<String> {
         val headers = HttpHeaders()
 
-        val retryAfterTimestampInMillis = (System.currentTimeMillis() + RETRY_AFTER_IN_SECONDS * 1000).toString()
-        headers.add("Retry-After", retryAfterTimestampInMillis)
+//        val retryAfterTimestampInMillis = (System.currentTimeMillis() + RETRY_AFTER_IN_SECONDS * 1000).toString()
+//        headers.add("Retry-After", retryAfterTimestampInMillis)
         return ResponseEntity("Too many requests", headers, HttpStatus.TOO_MANY_REQUESTS)
     }
 }

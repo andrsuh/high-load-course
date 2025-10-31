@@ -4,14 +4,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.time.delay
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 
 class SlidingWindowRateLimiter(
     private val rate: Long,
@@ -20,14 +19,14 @@ class SlidingWindowRateLimiter(
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     private val sum = AtomicLong(0)
-    private val queue = PriorityBlockingQueue<Measure>(10_000)
+    private val queue = PriorityBlockingQueue<Measure>(100)
 
     override fun tick(): Boolean {
         while (true) {
             val curSum = sum.get()
             if (curSum >= rate) return false
             if (sum.compareAndSet(curSum, curSum + 1)) {
-                queue.add(Measure(1, System.currentTimeMillis()))
+                queue.add(Measure(1, System.nanoTime()))
                 return true
             }
         }
@@ -51,13 +50,13 @@ class SlidingWindowRateLimiter(
     private val releaseJob = rateLimiterScope.launch {
         while (true) {
             val head = queue.peek()
-            val winStart = System.currentTimeMillis() - window.toMillis()
+            val winStart = System.nanoTime() - window.toNanos()
             if (head == null) {
                 delay(1L)
                 continue
             }
             if (head.timestamp > winStart) {
-                delay(head.timestamp - winStart)
+                delay(Duration.ofNanos(head.timestamp - winStart))
                 continue
             }
             sum.addAndGet(-1)

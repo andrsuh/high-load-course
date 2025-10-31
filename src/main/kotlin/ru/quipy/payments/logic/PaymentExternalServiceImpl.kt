@@ -6,7 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.makeRateLimiter
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.common.utils.okhttp.MetricsInterceptor
 import ru.quipy.common.utils.okhttp.RateLimiterInterceptor
 import ru.quipy.common.utils.okhttp.WindowLimiterInterceptor
@@ -30,20 +30,6 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
-
-        private const val DEFAULT_TARGET_UTILIZATION: Double = 0.8
-        private const val NO_TARGET_UTILIZATION: Double = 1.0
-
-        private fun safeRps(limit: Int, targetUtilization: Double = 1.0): Int {
-            require(limit > 0)
-            require(targetUtilization > 0 && targetUtilization <= 1)
-
-            val safe = kotlin.math.floor(limit.toDouble() * targetUtilization)
-                .toInt()
-                .coerceAtLeast(1)
-
-            return safe
-        }
     }
 
     private val serviceName = properties.serviceName
@@ -52,8 +38,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val safeRps = safeRps(rateLimitPerSec, NO_TARGET_UTILIZATION)
-    private val rateLimiter = makeRateLimiter(accountName, safeRps)
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val client = OkHttpClient
         .Builder()
         .addInterceptor(WindowLimiterInterceptor(parallelRequests))
@@ -62,10 +47,6 @@ class PaymentExternalSystemAdapterImpl(
         .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        if (deadline - now() < requestAverageProcessingTime.toMillis()) {
-            return
-        }
-
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -92,7 +73,8 @@ class PaymentExternalSystemAdapterImpl(
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                if (!body.result)
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId, message: ${body.message}")
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                 // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
