@@ -18,7 +18,7 @@ import java.util.concurrent.Semaphore
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
-    private val properties: PaymentAccountProperties,
+    val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
