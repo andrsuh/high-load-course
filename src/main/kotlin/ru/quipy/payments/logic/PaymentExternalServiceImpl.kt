@@ -129,6 +129,10 @@ class PaymentExternalSystemAdapterImpl(
         return properties
     }
 
+    override fun getNumberOfRequests() : Long {
+        return rateLimiter.size()
+    }
+
     override fun name() = properties.accountName
 
     fun checkDeadline(paymentId: UUID, transactionId: UUID, deadline: Long)  : Boolean {

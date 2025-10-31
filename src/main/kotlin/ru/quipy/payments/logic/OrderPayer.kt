@@ -57,9 +57,9 @@ class OrderPayer{
         val canParallel = paymentService.getAccountsProperties().minOf { p -> processingSpeed(p)}
         val maxProcessingTime = paymentService.getAccountsProperties().minOf { p -> p.averageProcessingTime}
 
-        val timeToProcessAllInQueue = ((linkedBlockingQueue.size.toDouble()) / canParallel) * (maxProcessingTime.toSeconds()+2) * 1000
+        val timeToProcessAllInQueue = ((linkedBlockingQueue.size.toDouble()) / canParallel) * (maxProcessingTime.toSeconds()) * 1000
 
-        val canRestInQueue =  maxProcessingTime.toSeconds() - 2.0
+        val canRestInQueue =  maxProcessingTime.toSeconds() /- 1.0
         val size = linkedBlockingQueue.size
         logger.info("Payment ${paymentId} for order $orderId created. timeToProcessAllInQueue $timeToProcessAllInQueue queueSize $size"  )
         if ((createdAt + timeToProcessAllInQueue ) > deadline)
@@ -87,5 +87,9 @@ class OrderPayer{
 
     fun getAccountsProperties() : List<PaymentAccountProperties> {
         return paymentService.getAccountsProperties()
+    }
+
+    fun getNumberOfRequests(): Long {
+        return (linkedBlockingQueue.size + paymentService.getNumberOfRequests()).toLong()
     }
 }

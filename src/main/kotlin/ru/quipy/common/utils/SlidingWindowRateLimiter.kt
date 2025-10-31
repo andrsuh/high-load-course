@@ -39,6 +39,10 @@ class SlidingWindowRateLimiter(
         }
     }
 
+    fun size() : Long{
+        return sum.get()
+    }
+
     data class Measure(
         val value: Long,
         val timestamp: Long

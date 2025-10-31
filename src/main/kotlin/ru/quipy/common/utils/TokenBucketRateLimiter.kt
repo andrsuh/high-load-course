@@ -28,6 +28,10 @@ class TokenBucketRateLimiter(
     private var start = System.currentTimeMillis()
     private var nextExpectedWakeUp = start + timeUnit.toMillis(window)
 
+    fun burst() : Long {
+        return nextExpectedWakeUp
+    }
+
     private val releaseJob = rateLimiterScope.launch {
         while (true) {
             start = System.currentTimeMillis()
@@ -62,6 +66,6 @@ class TokenBucketRateLimiter(
         java.util.function.Supplier { size() }
     )
         .description("Total number of payment requests in queue")
-        .tag("queue", "incoming rate limiter")
+        .tag("queue", "incoming rate limiter tokenBucket")
         .register(Metrics.globalRegistry)
 }

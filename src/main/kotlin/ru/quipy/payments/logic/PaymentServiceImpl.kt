@@ -31,4 +31,8 @@ class PaymentSystemImpl(
     override fun getAccountsProperties(): List<PaymentAccountProperties> {
         return paymentAccounts.map { it.getProperties() }
     }
+
+    override fun getNumberOfRequests(): Long {
+       return paymentAccounts.sumOf { it.getNumberOfRequests() }
+    }
 }
