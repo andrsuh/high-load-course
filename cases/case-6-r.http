@@ -1,0 +1,19 @@
+### Run test remotely
+# @timeout 120
+POST http://77.234.215.138:34321/run
+Content-Type: application/json
+
+{
+  "serviceName": "AcDc",
+  "token": "",
+  "branch": "hw-6",
+  "accounts": "acc-8",
+  "ratePerSecond": 7,
+  "testCount": 800,
+  "processingTimeMillis": 3500,
+  "onPremises": true
+}
+
+### Stop running test to save credits
+# @timeout 120
+POST http://77.234.215.138:31234/test/stop/AcDc
