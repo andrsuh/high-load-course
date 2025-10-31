@@ -82,7 +82,7 @@ class PaymentExternalSystemAdapterImpl(
         try {
             var x = 0
             val retryCount = 3
-            var pause = 500L
+            var pause = 300L
             while (x < retryCount) {
                 x++
                 val request = Request.Builder().run {
