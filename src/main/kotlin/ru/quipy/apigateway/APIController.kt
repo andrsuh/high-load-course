@@ -23,7 +23,7 @@ class APIController(@Autowired meterRegistry: MeterRegistry) {
     private val rateLimiter = LeakingBucketRateLimiter(
         rateLimitPerSec.toLong(),
         Duration.ofSeconds(1),
-        rateLimitPerSec * processingTimeSec - 1
+        rateLimitPerSec * (processingTimeSec - 1)
     )
 
     private val orderCounter: Counter = Counter.builder("http_requests_served")
