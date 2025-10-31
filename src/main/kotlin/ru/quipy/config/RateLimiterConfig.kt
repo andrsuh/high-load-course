@@ -33,7 +33,7 @@ class RateLimiterConfig {
     fun incomingPaymentRateLimiter(
         @Value("\${incoming.rate.strategy:SLIDING_WINDOW}") strategy: String,
         @Value("\${incoming.rate.limit:11}") rateLimit: Int,
-        @Value("\${incoming.rate.bucket.capacity:33}") bucketCapacity: Int
+        @Value("\${incoming.rate.bucket.capacity:110}") bucketCapacity: Int
     ): RateLimiter {
         return when (strategy.uppercase()) {
             "TOKEN_BUCKET" -> {
