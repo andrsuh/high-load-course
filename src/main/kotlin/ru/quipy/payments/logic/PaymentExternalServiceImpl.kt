@@ -41,6 +41,8 @@ class PaymentExternalSystemAdapterImpl(
     private val semaphore = Semaphore(parallelRequests, true)
 
     private val client = OkHttpClient.Builder().build()
+    private val maxRetryAttempts = 3
+    private val retryDelayMillis = 100L
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -81,21 +83,49 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             metrics.incomingRequestsCounter.increment()
-            client.newCall(request).execute().use { response ->
-                val body = try {
-                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+
+            var done = false
+            var n = 0
+            var delay = 0L
+            while (!done) {
+                client.newCall(request).execute().use { response ->
+                    val body = try {
+                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                    } catch (e: Exception) {
+                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                        ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+                    }
+                    done = body.result
+                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                }
+                if (done) {
+                    // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+                    // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(done, now(), transactionId, reason = null)
+                    }
+                    break
+                }
+                n += 1
+                if (n >= maxRetryAttempts) {
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId, max retry attempts reached")
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = "Max retry attempts reached")
+                    }
+                }
+                else {
+                    if (checkDeadline(paymentId, transactionId, deadline, delay)){
+                        logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId, client deadline will exceeded")
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Client deadline exceeded")
+                        }
+                        return
+                    }
+                    logger.warn("[$accountName] Payment retrying for txId: $transactionId, payment: $paymentId, attempt: $n, delay: $delay ms")
+                    Thread.sleep(delay)
+                    delay += retryDelayMillis
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
             }
         } catch (e: Exception) {
             when (e) {
@@ -135,8 +165,8 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
-    fun checkDeadline(paymentId: UUID, transactionId: UUID, deadline: Long)  : Boolean {
-        if (deadline < (now()+properties.averageProcessingTime.toMillis())) {
+    fun checkDeadline(paymentId: UUID, transactionId: UUID, deadline: Long, delay: Long = 0)  : Boolean {
+        if (deadline < (now()+properties.averageProcessingTime.toMillis() + delay)) {
             logger.error("goodby payment 2: $paymentId")
             paymentESService.update(paymentId) {
                 it.logProcessing(success = false, now(), transactionId = transactionId, reason = "deadline")
