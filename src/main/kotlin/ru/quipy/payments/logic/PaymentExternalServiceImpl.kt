@@ -16,7 +16,8 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-
+import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.ThreadLocalRandom
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -46,11 +47,16 @@ class PaymentExternalSystemAdapterImpl(
     private val semaphoreToLimitParallelRequest = OngoingWindow(parallelRequests)
     private val slidingWindowRateLimiter =
         SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    // Тут мы рассчитываем задержку между попытками
-    // averageProcessingTime = 7, rateLimitPerSec = 10, external rate = 7
-    // requestAverageProcessingTime.toMillis().toDouble()) / 2.0 - среднее время обработки одного запроса (7000 мс = 7 секунд), взяли половину 3.5 секунды, чтобы не ждать слишком долго
-    // rateLimitPerSec / 7.0 - В зависимости от лимита запросов в секунду будем менять - если лимит высокий (rateLimitPerSec большой) - множитель растёт и тогда задержка увеличивается
-    private val retryAfterMillis: Long = (((requestAverageProcessingTime.toMillis().toDouble()) / 2.0) * (rateLimitPerSec / 7.0)).toLong()
+
+    private val lastDurations = LinkedBlockingDeque<Long>(1000)
+
+    private fun quantile(q: Double): Long {
+        val copy = lastDurations.toList()
+        if (copy.isEmpty()) return 2000L
+        val sorted = copy.sorted()
+        val indexes = ((sorted.size - 1) * q).toInt().coerceIn(0, sorted.size - 1)
+        return sorted[indexes]
+    }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         try {
@@ -73,13 +79,29 @@ class PaymentExternalSystemAdapterImpl(
                 var success = false
                 // Максимум три попытки, чтобы не пытаться бесконечно решить не работающий запрос
                 while (attempt <= 3 && !success) {
+                    val startTime = now()
+                    val remaining = deadline - now()
+                    if (remaining <= 200) {
+                        break
+                    }
+
+                    val histP90 = quantile(0.90)
+                    val attemptTimeout = histP90.coerceAtLeast(500L).coerceAtMost(10_000L).coerceAtMost(remaining - 50)
+                    if (attemptTimeout <= 0L) {
+                        break
+                    }
+
                     try {
+                        val clientWithTimeout = client.newBuilder()
+                            .callTimeout(Duration.ofMillis(attemptTimeout))
+                            .readTimeout(Duration.ofMillis(attemptTimeout))
+                            .build()
                         val request = Request.Builder().run {
                             url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                             post(emptyBody)
                         }.build()
 
-                        client.newCall(request).execute().use { response ->
+                        clientWithTimeout.newCall(request).execute().use { response ->
                             val body = try {
                                 mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                             } catch (e: Exception) {
@@ -98,31 +120,44 @@ class PaymentExternalSystemAdapterImpl(
 
                             if (body.result) {
                                 success = true
-                            } else if (attempt < 3) {
-                                logger.warn("[$accountName] Retry #$attempt for payment $paymentId after ${retryAfterMillis}ms")
-                                Thread.sleep(retryAfterMillis)
                             }
                         }
                     } catch (e: Exception) {
-                        when (e) {
-                            is SocketTimeoutException -> {
-                                logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                                paymentESService.update(paymentId) {
-                                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                                }
-                            }
-
-                            else -> {
-                                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                                paymentESService.update(paymentId) {
-                                    it.logProcessing(false, now(), transactionId, reason = e.message)
-                                }
+                        if (e is SocketTimeoutException || e.cause is SocketTimeoutException) {
+                            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                            paymentESService.update(paymentId) {
+                                it.logProcessing(false, now(), null, reason = "Request timeout")
                             }
                         }
-                        if (attempt < 3) {
-                            // Вот тут говорим через сколько повторить
-                            Thread.sleep(retryAfterMillis)
+
+                        else {
+                            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+
+                            paymentESService.update(paymentId) {
+                                it.logProcessing(false, now(), null, reason = e.message ?: "unknown")
+                            }
+                        }
+                    } finally {
+                        val duration = now() - startTime
+                        if (lastDurations.size >= 1000) lastDurations.pollFirst()
+                        lastDurations.offerLast(duration)
+                    }
+
+                    if (!success) {
+                        val adder = ThreadLocalRandom.current().nextLong(0, 100)
+                        val backoff = (200L * (1L shl (attempt - 1))).coerceAtMost(2000L)
+                        val beforeDeadline = deadline - now()
+                        if (beforeDeadline <= 100)  {
+                            break
+                        }
+                        val actualSleep = minOf(backoff + adder, beforeDeadline - 50)
+                        if (actualSleep > 0) {
+                            try {
+                                Thread.sleep(actualSleep)
+                            } catch (e: InterruptedException) {
+                                Thread.currentThread().interrupt();
+                                break
+                            }
                         }
                     }
                     attempt++
@@ -132,6 +167,7 @@ class PaymentExternalSystemAdapterImpl(
             }
         } catch (e: InterruptedException) {
             logger.error("Problem while performing payment", e)
+            Thread.currentThread().interrupt()
         }
     }
 
