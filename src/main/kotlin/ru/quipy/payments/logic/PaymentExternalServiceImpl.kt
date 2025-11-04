@@ -3,6 +3,8 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.DistributionSummary
+import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import java.util.concurrent.Semaphore;
 import okhttp3.OkHttpClient
@@ -18,6 +20,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.atomic.AtomicInteger
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -36,9 +39,29 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     private val counter = Counter.builder("queries.amount").tag("name", "ordersAfter").register(registry)
+    private val summary =  DistributionSummary
+        .builder("request_latency_seconds")
+        .tags("service", "payment")
+        .publishPercentiles(0.5, 0.95, 0.99)
+        .register(registry)
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
+
+    private val retryCounter = Counter
+        .builder("payment_retry_count")
+        .tag("account", accountName)
+        .register(registry)
+
+    private val inflightGauge = Gauge
+        .builder("inflight_requests", this) { adapter ->
+            adapter.currentInflight.get().toDouble()
+        }
+        .tag("account", accountName)
+        .register(registry)
+
+    private val currentInflight = AtomicInteger(0)
+
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
@@ -61,6 +84,7 @@ class PaymentExternalSystemAdapterImpl(
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         try {
             semaphoreToLimitParallelRequest.acquire()
+            currentInflight.incrementAndGet()
             try {
                 logger.warn("[$accountName] Submitting payment request for payment $paymentId")
                 slidingWindowRateLimiter.tickBlocking()
@@ -91,7 +115,13 @@ class PaymentExternalSystemAdapterImpl(
                         break
                     }
 
+                    if (attempt > 1) {
+                        retryCounter.increment()
+                        logger.info("[$accountName] Retry #$attempt for payment $paymentId")
+                    }
+
                     try {
+                        val startTime = now()
                         val clientWithTimeout = client.newBuilder()
                             .callTimeout(Duration.ofMillis(attemptTimeout))
                             .readTimeout(Duration.ofMillis(attemptTimeout))
@@ -117,6 +147,9 @@ class PaymentExternalSystemAdapterImpl(
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
                         }
                         counter.increment()
+
+                            val durationSeconds = (now() - startTime).toDouble() / 1000.0
+                            summary.record(durationSeconds)
 
                             if (body.result) {
                                 success = true
@@ -163,6 +196,7 @@ class PaymentExternalSystemAdapterImpl(
                     attempt++
                 }
             } finally {
+                currentInflight.decrementAndGet()
                 semaphoreToLimitParallelRequest.release()
             }
         } catch (e: InterruptedException) {
