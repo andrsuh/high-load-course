@@ -148,8 +148,7 @@ class PaymentExternalSystemAdapterImpl(
                         }
                         counter.increment()
 
-                            val durationSeconds = (now() - startTime).toDouble() / 1000.0
-                            summary.record(durationSeconds)
+                            summary.record((now() - startTime) / 1000.0)
 
                             if (body.result) {
                                 success = true
