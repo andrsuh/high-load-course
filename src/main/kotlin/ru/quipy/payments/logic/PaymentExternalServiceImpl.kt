@@ -53,7 +53,7 @@ class PaymentExternalSystemAdapterImpl(
         paymentExecutor.submit {
             try {
                 metricsReporter.incrementOutgoing()
-                rateLimiter.tickBlocking()
+                rateLimiter.tick()
 
                 executePayment(paymentId, amount, paymentStartedAt, deadline)
             } catch (e: Exception) {
