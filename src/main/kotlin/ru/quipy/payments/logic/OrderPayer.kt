@@ -53,11 +53,11 @@ class OrderPayer {
     // test 2 - 126
     // test 3 - 265
     /*private val bucket = LeakingBucketRateLimiter(
-        rate = 11,
-        bucketSize = 25,
+        rate = 8,
+        bucketSize = 35,
         window = Duration.ofSeconds(1)
     )*/
-    private val slidingWindowRateLimiter = SlidingWindowRateLimiter(11, Duration.ofSeconds(1))
+    private val slidingWindowRateLimiter = SlidingWindowRateLimiter(8, Duration.ofSeconds(1))
     init {
         Gauge.builder("payment.executor.queue.size") { queue.size.toDouble() }
             .description("Current number of tasks waiting in payment executor queue")
@@ -77,7 +77,8 @@ class OrderPayer {
 
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        if (!slidingWindowRateLimiter.tick()) {
+        val toBlock = deadline - createdAt
+        if (!slidingWindowRateLimiter.tickBlocking(Duration.ofMillis(toBlock))) {
             throw RateLimitExceededException()
         }
         //val task = bucket.tick {

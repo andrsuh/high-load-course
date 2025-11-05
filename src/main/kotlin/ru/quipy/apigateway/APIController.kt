@@ -75,7 +75,7 @@ class APIController {
         }
         catch(ex: RateLimitExceededException) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                //.header("Retry-After", 1000.toString())
+                .header("Retry-After", 1.toString())
                 .build()
         }
     }
