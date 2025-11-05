@@ -55,4 +55,13 @@ class MetricsCollector {
             .builder("queue_size", linkedBlockingQueue) { it.size.toDouble() }
                 .register(Metrics.globalRegistry)
     }
+
+    fun incRetryCount(account: String) {
+        Counter
+            .builder("external_system_retry_counter")
+            .description("Number of retried failed external requests")
+            .tags("account", account)
+            .register(Metrics.globalRegistry)
+            .increment()
+    }
 }
