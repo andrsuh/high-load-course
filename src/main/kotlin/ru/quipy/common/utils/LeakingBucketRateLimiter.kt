@@ -16,17 +16,21 @@ class LeakingBucketRateLimiter(
     bucketSize: Int,
 ) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
-    private val queue = LinkedBlockingQueue<Int>(bucketSize)
+    private val queue = LinkedBlockingQueue<() -> Unit>(bucketSize)
 
     override fun tick(): Boolean {
-        return queue.offer(1)
+        return queue.offer {}
+    }
+
+    fun tick(task: () -> Unit): Boolean {
+        return queue.offer(task)
     }
 
     private val releaseJob = rateLimiterScope.launch {
         while (true) {
             delay(window.toMillis())
-            for (i in 0..rate) {
-                queue.poll()
+            for (i in 0 until rate) {
+                queue.poll()?.invoke()
             }
         }
     }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }

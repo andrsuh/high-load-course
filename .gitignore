@@ -3,6 +3,8 @@ target/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+prometheus/data/
+grafana/data/
 
 ### STS ###
 .apt_generated
@@ -18,7 +20,7 @@ target/
 *.iws
 *.iml
 *.ipr
-./http-client.env.json
+http-client.env.json
 
 ### NetBeans ###
 /nbproject/private/
