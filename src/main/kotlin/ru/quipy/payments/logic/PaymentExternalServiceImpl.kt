@@ -84,25 +84,28 @@ class PaymentExternalSystemAdapterImpl(
 
             metrics.incomingRequestsCounter.increment()
 
-            var done = false
+            var send = false
             var n = 0
             var delay = 0L
-            while (!done) {
+            while (!send) {
+                val startCall = System.currentTimeMillis()
                 client.newCall(request).execute().use { response ->
+                    val executionTimeMillis = System.currentTimeMillis() - startCall
+                    metrics.recordLatency(response.code, executionTimeMillis)
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
                         logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
                         ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                     }
-                    done = body.result
+                    send = body.result
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                 }
-                if (done) {
+                if (send) {
                     // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                     // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
                     paymentESService.update(paymentId) {
-                        it.logProcessing(done, now(), transactionId, reason = null)
+                        it.logProcessing(send, now(), transactionId, reason = null)
                     }
                     break
                 }
@@ -122,6 +125,7 @@ class PaymentExternalSystemAdapterImpl(
                         return
                     }
                     logger.warn("[$accountName] Payment retrying for txId: $transactionId, payment: $paymentId, attempt: $n, delay: $delay ms")
+                    metrics.paymentRetryCounter.increment()
                     Thread.sleep(delay)
                     delay += retryDelayMillis
                 }
