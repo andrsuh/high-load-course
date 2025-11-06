@@ -3,8 +3,10 @@ package ru.quipy.metrics
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Metrics
 import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Timer
 import org.springframework.stereotype.Component
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 @Component
 class MetricsCollector {
@@ -63,5 +65,14 @@ class MetricsCollector {
             .tags("account", account)
             .register(Metrics.globalRegistry)
             .increment()
+    }
+
+    fun recordMaxRequestDuration(durationMs: Long, account: String) {
+        Timer
+            .builder("request_max_duration")
+            .description("Quantile duration in milliseconds")
+            .tags("account", account)
+            .register(Metrics.globalRegistry)
+            .record(durationMs, TimeUnit.MILLISECONDS)
     }
 }

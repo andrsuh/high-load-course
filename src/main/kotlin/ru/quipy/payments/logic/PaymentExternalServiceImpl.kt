@@ -157,7 +157,10 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         val index = ((copy.size - 1) * 0.95).toInt().coerceIn(0, copy.size - 1)
-        return copy.sorted()[index]
+        val quantileTime = copy.sorted()[index]
+        metricsCollector.recordMaxRequestDuration(quantileTime, accountName)
+
+        return quantileTime
     }
 
     override fun price() = properties.price
