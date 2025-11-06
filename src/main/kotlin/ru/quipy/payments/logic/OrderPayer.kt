@@ -1,5 +1,6 @@
 package ru.quipy.payments.logic
 
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -13,7 +14,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @Service
-class OrderPayer {
+class OrderPayer(registry: MeterRegistry) {
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -34,10 +35,18 @@ class OrderPayer {
         NamedThreadFactory("payment-submission-executor")
     )
 
+    private val paymentExecutorQueueSize =
+        registry.gauge("payment_executor_queue_size", paymentExecutor.queue) {
+            it.size.toDouble()
+        }
+
+    private val paymentExecutionTimer = registry.timer("payment_executor_task_duration")
+
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
         paymentExecutor.submit {
+            val start = System.nanoTime()
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,
@@ -48,6 +57,7 @@ class OrderPayer {
             logger.info("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            paymentExecutionTimer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS)
         }
 
         return createdAt
