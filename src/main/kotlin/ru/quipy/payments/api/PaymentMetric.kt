@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.Metrics
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicLong
 import io.micrometer.core.instrument.Timer
+import java.util.concurrent.TimeUnit
 
 @Component
 class PaymentMetric {
@@ -63,6 +64,6 @@ class PaymentMetric {
             .tag("status_code", statusCode.toString())
             .register(Metrics.globalRegistry)
 
-        timer.record(durationMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+        timer.record(durationMillis, TimeUnit.MILLISECONDS)
     }
 }

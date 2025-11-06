@@ -15,6 +15,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.Semaphore
 import ru.quipy.payments.api.PaymentMetric
+import java.util.concurrent.TimeUnit
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -40,8 +41,13 @@ class PaymentExternalSystemAdapterImpl(
     private var rateLimiter = SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
     private val semaphore = Semaphore(parallelRequests, true)
 
-    private val client = OkHttpClient.Builder().build()
-    private val maxRetryAttempts = 3
+    private val client = OkHttpClient.Builder().apply {
+        if (properties.percentile90 != null) {
+            callTimeout(properties.percentile90, TimeUnit.MILLISECONDS)
+        }
+    }.build()
+
+    private val maxRetryAttempts = 4
     private val retryDelayMillis = 100L
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -72,24 +78,26 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            metrics.rateLimiterQueueCount.incrementAndGet()
-            metrics.rateLimiterQueueDurationTimer.record (Runnable {
-                rateLimiter.tickBlocking()
-            })
-            metrics.rateLimiterQueueCount.decrementAndGet()     
-
-            if (checkDeadline(paymentId, transactionId, deadline)){
-                return
-            }
-
-            metrics.incomingRequestsCounter.increment()
-
             var send = false
             var n = 0
             var delay = 0L
             while (!send) {
+
+                metrics.rateLimiterQueueCount.incrementAndGet()
+                metrics.rateLimiterQueueDurationTimer.record (Runnable {
+                    rateLimiter.tickBlocking()
+                })
+                metrics.rateLimiterQueueCount.decrementAndGet()     
+
+                if (checkDeadline(paymentId, transactionId, deadline)){
+                    return
+                }
+
+                metrics.incomingRequestsCounter.increment()
+
                 val startCall = System.currentTimeMillis()
-                client.newCall(request).execute().use { response ->
+                try {
+                    client.newCall(request).execute().use { response ->
                     val executionTimeMillis = System.currentTimeMillis() - startCall
                     metrics.recordLatency(response.code, executionTimeMillis)
                     val body = try {
@@ -100,48 +108,71 @@ class PaymentExternalSystemAdapterImpl(
                     }
                     send = body.result
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                }
-                if (send) {
-                    // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                    // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(send, now(), transactionId, reason = null)
                     }
-                    break
-                }
-                n += 1
-                if (n >= maxRetryAttempts) {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId, max retry attempts reached")
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Max retry attempts reached")
-                    }
-                }
-                else {
-                    if (checkDeadline(paymentId, transactionId, deadline, delay)){
-                        logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId, client deadline will exceeded")
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Client deadline exceeded")
-                        }
-                        return
-                    }
-                    logger.warn("[$accountName] Payment retrying for txId: $transactionId, payment: $paymentId, attempt: $n, delay: $delay ms")
-                    metrics.paymentRetryCounter.increment()
-                    Thread.sleep(delay)
-                    delay += retryDelayMillis
-                }
 
+                    if (send) {
+                        // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+                        // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(send, now(), transactionId, reason = null)
+                        }
+                        break
+                    }
+                    n += 1
+                    if (n >= maxRetryAttempts) {
+                        logger.warn("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId, max retry attempts reached")
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Max retry attempts reached")
+                        }
+                    }
+                    else {
+                        if (checkDeadline(paymentId, transactionId, deadline, delay)){
+                            logger.warn("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId, client deadline will exceeded")
+                            paymentESService.update(paymentId) {
+                                it.logProcessing(false, now(), transactionId, reason = "Client deadline exceeded")
+                            }
+                            return
+                        }
+                        logger.warn("[$accountName] Payment retrying for txId: $transactionId, payment: $paymentId, attempt: $n, delay: $delay ms")
+                        metrics.paymentRetryCounter.increment()
+                        Thread.sleep(delay)
+                        delay += retryDelayMillis
+                    }
+                }
+                catch (e: java.io.InterruptedIOException) {
+                    n += 1
+                    if (n >= maxRetryAttempts) {
+                        logger.warn("[$accountName] Request timed out for txId: $transactionId, payment: $paymentId, max retry attempts reached")
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Max retry attempts reached")
+                        }
+                    }
+                    else {
+                        if (checkDeadline(paymentId, transactionId, deadline, delay)){
+                            logger.warn("[$accountName] Request timed out for txId: $transactionId, payment: $paymentId, client deadline will exceeded")
+                            paymentESService.update(paymentId) {
+                                it.logProcessing(false, now(), transactionId, reason = "Client deadline exceeded")
+                            }
+                            return
+                        }
+                        logger.warn("[$accountName] Request timed out for txId: $transactionId, payment: $paymentId Try again..., attempt: $n, delay: $delay ms")
+                        metrics.paymentRetryCounter.increment()
+                        Thread.sleep(delay)
+                        delay += retryDelayMillis
+                    }
+                }
             }
         } catch (e: Exception) {
             when (e) {
                 is SocketTimeoutException -> {
-                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                    logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                     }
                 }
 
                 else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                    logger.warn("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = e.message)

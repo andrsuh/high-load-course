@@ -35,6 +35,10 @@ class PaymentAccountsConfig () {
     @Value("#{'\${payment.accounts}'.split(',')}")
     lateinit var allowedAccounts: List<String>
 
+    val percentile90: Map<String, Long> = mapOf(
+        "acc-7" to 1070L
+    )
+
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,metrics: PaymentMetric ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
@@ -50,7 +54,14 @@ class PaymentAccountsConfig () {
             mapper.typeFactory.constructCollectionType(List::class.java, PaymentAccountProperties::class.java)
         )
             .filter { it.accountName in allowedAccounts }
-            .map { it.copy(enabled = true) }
+            .map {
+                val p90 = percentile90[it.accountName]
+                if (p90 == null) {
+                    it.copy(enabled = true)
+                } else {
+                    it.copy(enabled = true, percentile90 = p90)
+                }
+            }
             .onEach(::println)
             .map {
                 PaymentExternalSystemAdapterImpl(
