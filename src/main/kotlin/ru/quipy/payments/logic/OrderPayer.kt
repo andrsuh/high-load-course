@@ -16,6 +16,9 @@ import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import io.micrometer.core.instrument.Timer
+import kotlin.time.DurationUnit
+import kotlin.time.measureTime
 
 @Service
 class OrderPayer(
@@ -59,6 +62,11 @@ class OrderPayer(
         throw TooManyRequestsException(System.currentTimeMillis() + retryAfterMillis)
     }
 
+    private val requestLatency: Timer = Timer.builder("request_latency")
+        .description("Время выполнения запросов к внешней платёжной системе")
+        .publishPercentiles(0.5, 0.8, 0.9, 0.99)
+        .register(meterRegistry)
+
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
@@ -77,8 +85,10 @@ class OrderPayer(
                 )
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
-
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            val paymentTime = measureTime {
+                paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            }
+            requestLatency.record(paymentTime.toLong(DurationUnit.MILLISECONDS), TimeUnit.MILLISECONDS)
         }
         return createdAt
     }

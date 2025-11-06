@@ -3,6 +3,7 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.MeterRegistry
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -16,7 +17,6 @@ import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
-import kotlin.math.min
 import kotlin.math.pow
 
 // Advice: always treat time as a Duration
@@ -41,6 +41,7 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val timeOut = Duration.ofSeconds(2)
 
     private val incomingRequestsCounter: Counter = Counter
         .builder("incoming.requests")
@@ -62,6 +63,11 @@ class PaymentExternalSystemAdapterImpl(
         .description("Количество завершенных исходящих запросов")
         .tags("account", properties.accountName)
         .register(meterRegistry)
+
+    private val requestLatencySummary: DistributionSummary = DistributionSummary.builder("payment_request_latency")
+        .description("Время выполнения запросов к внешней платёжной системе")
+        .baseUnit("milliseconds")
+        .tag("account", accountName) .register(meterRegistry)
 
     private val client = OkHttpClient.Builder()
         .readTimeout(requestAverageProcessingTime.plusSeconds(10).toMillis(), TimeUnit.MILLISECONDS)
@@ -116,7 +122,7 @@ class PaymentExternalSystemAdapterImpl(
                 outgoingRequestsCounter.increment()
 
                 val request = Request.Builder().run {
-                    url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+                    url("http://$paymentProviderHostPort/external/process?timeout=$timeOut&serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                     post(emptyBody)
                 }.build()
 
@@ -131,6 +137,8 @@ class PaymentExternalSystemAdapterImpl(
                     .build()
 
                 perCallClient.newCall(request).execute().use { response ->
+                    val requestDuration = System.currentTimeMillis() - paymentStartedAt
+                    requestLatencySummary.record(requestDuration.toDouble())
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
