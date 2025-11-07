@@ -15,7 +15,8 @@ import java.util.*
 @RestController
 class APIController(
     private val orderRateLimiter: RateLimiter,
-    private val paymentRateLimiter: RateLimiter
+    private val paymentRateLimiter: RateLimiter,
+    private val incomingPaymentRateLimiter: RateLimiter
 ) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
@@ -65,9 +66,15 @@ class APIController(
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val now = System.currentTimeMillis()
 
+        if (!incomingPaymentRateLimiter.tick()) {
+            val retryAfterMs = (1000.0 / 11).toInt()
+            throw TooManyRequestsException("Rate limit exceeded. Retry-After: $retryAfterMs")
+        }
+
         if (!orderPayer.canAcceptRequest()) {
-            val retryAfterMs = now + 500  // Просим подождать 500ms
-            throw TooManyRequestsException("System overloaded. Current queue: ${orderPayer.getQueueSize()}. Retry-After: $retryAfterMs")
+            val queueSize = orderPayer.getQueueSize()
+            val retryAfterMs = minOf(500, 50 + queueSize * 5)
+            throw TooManyRequestsException("System overloaded. Current queue: $queueSize. Retry-After: $retryAfterMs")
         }
 
         val paymentId = UUID.randomUUID()
@@ -87,16 +94,16 @@ class APIController(
 
     @ExceptionHandler(TooManyRequestsException::class)
     fun handleTooManyRequests(ex: TooManyRequestsException): ResponseEntity<ErrorResponse> {
-        val retryAfter = ex.message?.substringAfter("Retry-After: ")?.toLongOrNull()
-            ?: (System.currentTimeMillis() + 1000)
+
+        val retryAfterSeconds = ex.message?.substringAfter("Retry-After: ")?.toIntOrNull() ?: 0
 
         return ResponseEntity
             .status(HttpStatus.TOO_MANY_REQUESTS)
-            .header("Retry-After", retryAfter.toString())
-            .body(ErrorResponse(ex.message ?: "Too many requests", retryAfter))
+            .header("Retry-After", retryAfterSeconds.toString())
+            .body(ErrorResponse(ex.message ?: "Too many requests", retryAfterSeconds))
     }
 
-    data class ErrorResponse(val message: String, val retryAfter: Long)
+    data class ErrorResponse(val message: String, val retryAfter: Int)
 }
 
 class TooManyRequestsException(message: String) : RuntimeException(message)

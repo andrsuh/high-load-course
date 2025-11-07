@@ -66,7 +66,7 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     private val rateLimiter = SlidingWindowRateLimiter(
-        rate = (rateLimitPerSec * 1.05).toLong(),
+        rate = rateLimitPerSec.toLong(),
         window = Duration.ofSeconds(1)
     )
 
