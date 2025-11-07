@@ -60,7 +60,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val asyncExecutor = ThreadPoolExecutor(
         optimalThreads,
-        optimalThreads * 2,
+        optimalThreads,
         60L,
         TimeUnit.SECONDS,
         LinkedBlockingQueue(500),
