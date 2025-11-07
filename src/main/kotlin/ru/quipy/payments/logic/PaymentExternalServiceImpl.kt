@@ -179,10 +179,10 @@ class PaymentExternalSystemAdapterImpl(
                         val adder = ThreadLocalRandom.current().nextLong(0, 100)
                         val backoff = (200L * (1L shl (attempt - 1))).coerceAtMost(2000L)
                         val beforeDeadline = deadline - now()
-                        if (beforeDeadline <= 100)  {
+                        if (beforeDeadline <= 60)  {
                             break
                         }
-                        val actualSleep = minOf(backoff + adder, beforeDeadline - 50)
+                        val actualSleep = minOf(backoff + adder, beforeDeadline - 60)
                         if (actualSleep > 0) {
                             try {
                                 Thread.sleep(actualSleep)
