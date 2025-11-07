@@ -37,7 +37,7 @@ class OrderPayer {
         return if (totalThreads > 0) {
             (totalThreads * 1.2).toInt()
         } else {
-            180
+            300
         }
     }
 
