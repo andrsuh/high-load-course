@@ -1,0 +1,17 @@
+### КЕЙС 4: Тест для аккаунта acc-23
+### ⚠️  ВАЖНО: ПЕРЕД ЗАПУСКОМ ТЕСТА ЗАПУСТИТЕ ПРИЛОЖЕНИЕ С АККАУНТОМ acc-23:
+### export PAYMENT_ACCOUNTS=acc-23 && mvn spring-boot:run
+
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 16,
+  "testCount": 1600,
+  "processingTimeMillis": 30000
+}
+
+### Stop running test to save time and resources
+POST http://localhost:1234/test/stop/{{serviceName}}
