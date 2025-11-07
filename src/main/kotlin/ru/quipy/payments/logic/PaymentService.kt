@@ -47,6 +47,8 @@ data class PaymentAccountProperties(
     val price: Int,
     val averageProcessingTime: Duration = Duration.ofSeconds(11),
     val enabled: Boolean,
+    val threads: Int = 64,
+    val queueCapacity: Int = 1000,
 )
 
 /**
