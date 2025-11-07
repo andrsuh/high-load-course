@@ -1,5 +1,3 @@
-![img.png](%D1%84%D0%BE%D1%82%D0%BE/img.png)![img_1.png](%D1%84%D0%BE%D1%82%D0%BE/img_1.png)
-![img_2.png](%D1%84%D0%BE%D1%82%D0%BE/img_2.png)
+параметры системы оплаты:
 
-аналогичное 5-2, только пришлось несколько уменьшить размер ведра по причине, что входящая нагрузка, хоть в среднем и 3 rps (судя по тест-кейсу), но на деле на графиках видно как она поднимается до 13 rps резком скачком
-![img_3.png](%D1%84%D0%BE%D1%82%D0%BE/img_3.png)
+PaymentAccountProperties(serviceName=m3402-SkibidiToilets, accountName=acc-7, parallelRequests=50, rateLimitPerSec=8, price=30, averageProcessingTime=PT1.2S, enabled=true)

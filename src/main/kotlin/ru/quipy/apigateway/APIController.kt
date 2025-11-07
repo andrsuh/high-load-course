@@ -18,8 +18,8 @@ import java.util.*
 @RestController
 class APIController(@Autowired meterRegistry: MeterRegistry) {
 
-    private val rateLimitPerSec = 11
-    private val processingTimeSec = 26
+    private val rateLimitPerSec = 8
+    private val processingTimeSec = 6
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
     private val rateLimiter = LeakingBucketRateLimiter(
         rateLimitPerSec.toLong(),
