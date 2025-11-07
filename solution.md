@@ -15,3 +15,9 @@ PaymentAccountProperties(serviceName=m3402-SkibidiToilets, accountName=acc-7, pa
 ![img.png](фото/img.png)
 
 Все запросы исполняются менее чем за 1.2 секунды
+
+В условии кейса так же просят метрику ретраев. Сделали такую:
+```
+rate(payments_retries_total[30s])
+```
+![img.png](фото/img_4.png)

@@ -48,6 +48,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val submittedCounter = Counter.builder("payments_submitted_total").register(meterRegistry)
     private val sentQueriesSuccess = Counter.builder("payments_success").register(meterRegistry)
+    private val retryCounter = Counter.builder("payments_retries_total").register(meterRegistry)
 
     private val requestLatency = DistributionSummary.builder("request_latency")
         .description("Request latency.")
@@ -128,11 +129,13 @@ class PaymentExternalSystemAdapterImpl(
                         if (body.result || (x == retryCount))
                             break
                         Thread.sleep(exponentialBackoffDelay(x))
+                        retryCounter.increment()
                     }
                 } catch (e: java.io.InterruptedIOException) {
                     logger.warn("[$accountName] Request interrupted by client timeout for txId=$transactionId (attempt $x/$retryCount)")
                     if (x < retryCount && now() < deadline) {
                         Thread.sleep(exponentialBackoffDelay(x))
+                        retryCounter.increment()
                         continue
                     } else {
                         paymentESService.update(paymentId) {
