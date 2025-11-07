@@ -36,11 +36,16 @@ class PaymentExternalSystemAdapterImpl(
 
     private val semaphore = Semaphore(parallelRequests)
     private val client = OkHttpClient.Builder()
-        .connectTimeout(2000, TimeUnit.MILLISECONDS)
-        .readTimeout(1600, TimeUnit.MILLISECONDS)
+        .connectTimeout(2500, TimeUnit.MILLISECONDS)
+        .readTimeout(1800, TimeUnit.MILLISECONDS)
         .writeTimeout(1600, TimeUnit.MILLISECONDS)
-        .callTimeout(2500, TimeUnit.MILLISECONDS)
+        .callTimeout(3500, TimeUnit.MILLISECONDS)
         .build()
+
+    private val rateLimiter = SlidingWindowRateLimiter(
+        rate = properties.rateLimitPerSec.toLong(),
+        window = Duration.ofSeconds(1)
+    )
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         var attempt = 0
@@ -59,6 +64,12 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
+            val toBlock = deadline - System.currentTimeMillis()
+            if (!rateLimiter.tickBlocking(Duration.ofMillis(toBlock))) {
+                recordFinalFailure(paymentId, paymentStartedAt, "Rate limit exceeded")
+                return
+            }
+
             val acquired = semaphore.tryAcquire(remainingTime, TimeUnit.MILLISECONDS)
             if (!acquired) {
                 recordFinalFailure(paymentId, paymentStartedAt, "Semaphore timeout")
@@ -71,20 +82,13 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             try {
-                val callTimeout = minOf(remainingTime - 100, 2500)
-                val callClient = client.newBuilder()
-                    .callTimeout(callTimeout, TimeUnit.MILLISECONDS)
-                    .readTimeout(callTimeout, TimeUnit.MILLISECONDS)
-                    .writeTimeout(callTimeout, TimeUnit.MILLISECONDS)
-                    .connectTimeout(minOf(callTimeout, 2000), TimeUnit.MILLISECONDS)
-                    .build()
 
                 val request = Request.Builder().run {
                     url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                     post(emptyBody)
                 }.build()
 
-                callClient.newCall(request).execute().use { response ->
+                client.newCall(request).execute().use { response ->
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
@@ -105,11 +109,10 @@ class PaymentExternalSystemAdapterImpl(
                         return
                     }
 
-                    // Ретрай после паузы
                     val backoff = when (attempt) {
-                        1 -> 50L
-                        2 -> 100L
-                        else -> 200L
+                        1 -> 100L
+                        2 -> 200L
+                        else -> 400L
                     }
                     if (remainingTime > backoff + 200) {
                         Thread.sleep(backoff)
@@ -122,7 +125,6 @@ class PaymentExternalSystemAdapterImpl(
                         if (e is SocketTimeoutException) "Timeout" else e.message ?: "Error")
                     return
                 }
-                // Ретрай для таймаута без паузы
             } finally {
                 semaphore.release()
             }
