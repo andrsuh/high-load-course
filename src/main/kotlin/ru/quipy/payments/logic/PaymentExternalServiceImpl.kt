@@ -105,7 +105,7 @@ class PaymentExternalSystemAdapterImpl(
                 val start = System.currentTimeMillis()
                 client.newCall(request).execute().use { response ->
                     val latency = (System.currentTimeMillis() - start).toDouble()
-                    requestLatency.observe(latency)
+                    requestLatency.labelValues(response.code.toString()).observe(latency)
 
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
