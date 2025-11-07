@@ -7,6 +7,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import org.springframework.boot.autoconfigure.batch.BatchDataSource
+import org.springframework.context.annotation.Bean
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -14,6 +16,7 @@ import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.Semaphore
+import ru.quipy.metrics.MetricsService
 
 
 // Advice: always treat time as a Duration
@@ -22,6 +25,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    private val metricsService: MetricsService
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -42,6 +46,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val client = OkHttpClient.Builder().build()
 
+    @Bean
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         val transactionId = UUID.randomUUID()
         val start = now()
@@ -71,6 +76,11 @@ class PaymentExternalSystemAdapterImpl(
 
         while (attempt < maxRetries && !success) {
             attempt++
+
+            if (attempt > 1) {
+                metricsService.increaseRetryCounter()
+            }
+
             val attemptStart = now()
             val timeLeft = deadline - attemptStart
 
