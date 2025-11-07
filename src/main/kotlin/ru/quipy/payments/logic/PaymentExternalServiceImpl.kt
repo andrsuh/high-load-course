@@ -3,8 +3,8 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.MeterRegistry
-import io.prometheus.metrics.core.metrics.Summary
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -48,14 +48,10 @@ class PaymentExternalSystemAdapterImpl(
     private val submittedCounter = Counter.builder("payments_submitted_total").register(meterRegistry)
     private val sentQueriesSuccess = Counter.builder("payments_success").register(meterRegistry)
 
-    var requestLatency: Summary = Summary.builder()
-        .name("request_latency")
-        .help("Request latency.")
-        .quantile(0.5, 0.01)
-        .quantile(0.8, 0.005)
-        .quantile(0.99, 0.005)
-        .labelNames("status_code")
-        .register()
+    private val requestLatency = DistributionSummary.builder("request_latency")
+        .description("Request latency.")
+        .publishPercentiles(0.5, 0.8, 0.99)
+        .register(meterRegistry)
 
 
     private fun waitRateLimitOrTimeout(deadline: Long): Boolean {
@@ -105,7 +101,8 @@ class PaymentExternalSystemAdapterImpl(
                 val start = System.currentTimeMillis()
                 client.newCall(request).execute().use { response ->
                     val latency = (System.currentTimeMillis() - start).toDouble()
-                    requestLatency.labelValues(response.code.toString()).observe(latency)
+                    requestLatency.record(latency)
+
 
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
