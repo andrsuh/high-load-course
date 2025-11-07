@@ -66,11 +66,6 @@ class APIController(
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val now = System.currentTimeMillis()
 
-        if (!incomingPaymentRateLimiter.tick()) {
-            val retryAfterMs = (1000.0 / 11).toInt()
-            throw TooManyRequestsException("Rate limit exceeded. Retry-After: $retryAfterMs")
-        }
-
         if (!orderPayer.canAcceptRequest()) {
             val queueSize = orderPayer.getQueueSize()
             val retryAfterMs = minOf(500, 50 + queueSize * 5)

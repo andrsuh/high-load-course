@@ -9,6 +9,11 @@ interface PaymentService {
      * Submit payment request to some external service.
      */
     fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: AtomicInteger)
+
+    /**
+     * Get total optimal threads capacity across all accounts
+     */
+    fun getTotalOptimalThreads(): Int
 }
 
 /**
@@ -25,6 +30,10 @@ interface PaymentExternalSystemAdapter {
     fun price(): Int
 
     fun isEnabled(): Boolean
+
+    fun getOptimalThreads(): Int
+
+    fun getQueueSize(): Int
 }
 
 /**
