@@ -50,7 +50,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val requestLatency = DistributionSummary.builder("request_latency")
         .description("Request latency.")
-        .publishPercentiles(0.5, 0.8, 0.99)
+        .publishPercentiles(0.5, 0.8, 0.90, 0.95, 0.99)
         .register(meterRegistry)
 
 
