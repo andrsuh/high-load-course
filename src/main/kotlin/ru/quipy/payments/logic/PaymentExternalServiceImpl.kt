@@ -53,10 +53,6 @@ class PaymentExternalSystemAdapterImpl(
 
         while (attempt < maxAttempts) {
             attempt++
-            if (attempt > 1) {
-                metricsReporter.incrementRetry()
-                logger.info("[$accountName] Retry attempt $attempt for payment $paymentId")
-            }
 
             val remainingTime = deadline - System.currentTimeMillis()
             if (remainingTime < 200) {
@@ -83,6 +79,10 @@ class PaymentExternalSystemAdapterImpl(
 
             try {
 
+                val callTimeout = minOf(remainingTime - 100, 2500)
+
+                metricsReporter.updateCurrentTimeout(accountName, callTimeout.toLong())
+
                 val request = Request.Builder().run {
                     url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                     post(emptyBody)
@@ -104,6 +104,10 @@ class PaymentExternalSystemAdapterImpl(
                     }
 
                     val shouldRetry = response.code == 429 || response.code in 500..599
+
+                    val cause = if (response.code == 429) RetryCause.HTTP_429 else RetryCause.HTTP_5XX
+                    metricsReporter.incrementRetry(accountName, cause)
+
                     if (!shouldRetry || attempt == maxAttempts) {
                         recordProcessingFailure(paymentId, transactionId, "HTTP ${response.code}: ${body.message}")
                         return
@@ -125,6 +129,11 @@ class PaymentExternalSystemAdapterImpl(
                         if (e is SocketTimeoutException) "Timeout" else e.message ?: "Error")
                     return
                 }
+
+                metricsReporter.incrementRetry(accountName, RetryCause.TIMEOUT)
+                logger.info("[$accountName] Retry attempt ${attempt + 1} for payment $paymentId (cause=TIMEOUT)")
+
+                // Ретрай для таймаута без паузы
             } finally {
                 semaphore.release()
             }
