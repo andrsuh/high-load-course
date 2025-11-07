@@ -26,4 +26,8 @@ class PaymentSystemImpl(
             account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
         }
     }
+
+    override fun approximateWaitingTime(queueLength: Long): Long {
+        return paymentAccounts.maxOf { it.approximateWaitingTime(queueLength) }
+    }
 }

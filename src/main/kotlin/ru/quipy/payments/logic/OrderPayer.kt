@@ -36,8 +36,12 @@ class OrderPayer {
         CallerBlockingRejectedExecutionHandler()
     )
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long? {
         val createdAt = System.currentTimeMillis()
+        val requiredTime = paymentService.approximateWaitingTime((paymentExecutor.activeCount + paymentExecutor.queue.size).toLong())
+        if (System.currentTimeMillis() + requiredTime >= deadline) {
+            return null
+        }
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(

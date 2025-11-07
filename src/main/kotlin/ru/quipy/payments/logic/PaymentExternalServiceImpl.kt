@@ -39,6 +39,7 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val processingTime = properties.averageProcessingTime
 
     private val client = OkHttpClient.Builder().build()
 
@@ -137,7 +138,7 @@ class PaymentExternalSystemAdapterImpl(
             // Увеличиваем счетчик успешных захватов семафора
             semaphoreAcquiredCounter.increment()
 
-            rateLimiter.tickBlocking()
+            rateLimiter.tickWithPriorityBlocking(deadline)
 
             try {
                 val request = Request.Builder()
@@ -183,6 +184,10 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         }
+    }
+
+    override fun approximateWaitingTime(queueLength: Long): Long {
+        return queueLength / rateLimitPerSec * 1000 + (processingTime.toMillis() * 1.2).toLong()
     }
 
     override fun price() = properties.price
