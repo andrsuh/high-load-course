@@ -10,11 +10,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.Semaphore
@@ -120,6 +118,14 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun approximateWaitingTime(queueLength: Long): Long {
         return queueLength / rateLimitPerSec * 1000 + processingTime.toMillis()
+    }
+
+    override fun getRateLimit(): Long {
+        return rateLimitPerSec.toLong()
+    }
+
+    override fun getProcessingTime(): Duration {
+       return processingTime
     }
 
     override fun price() = properties.price

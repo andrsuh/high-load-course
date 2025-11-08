@@ -1,17 +1,10 @@
 package ru.quipy.payments.logic
 
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
-import ru.quipy.common.utils.NamedThreadFactory
-import ru.quipy.core.EventSourcingService
-import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
-
 
 @Service
 class PaymentSystemImpl(
@@ -29,5 +22,16 @@ class PaymentSystemImpl(
 
     override fun approximateWaitingTime(queueLength: Long): Long {
         return paymentAccounts.maxOf { it.approximateWaitingTime(queueLength) }
+    }
+
+    override fun getLeakingBucket(waitingTime: Duration): LeakingBucketRateLimiter {
+        val bucketSize = paymentAccounts.sumOf {
+            it.getRateLimit() * (waitingTime.toMillis() - (it.getProcessingTime().toMillis() * 2)) / 1000
+        }
+        return LeakingBucketRateLimiter(
+            rate = paymentAccounts.sumOf { it.getRateLimit() },
+            window = Duration.ofSeconds(1),
+            bucketSize = bucketSize.toInt()
+        )
     }
 }
