@@ -39,7 +39,7 @@ class OrderPayer {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long? {
         val createdAt = System.currentTimeMillis()
         val requiredTime = paymentService.approximateWaitingTime((paymentExecutor.activeCount + paymentExecutor.queue.size).toLong())
-        if (System.currentTimeMillis() + requiredTime >= deadline) {
+        if (createdAt + requiredTime >= deadline) {
             return null
         }
         paymentExecutor.submit {
