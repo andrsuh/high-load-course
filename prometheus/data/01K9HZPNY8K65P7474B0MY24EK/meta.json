@@ -1,0 +1,17 @@
+{
+	"ulid": "01K9HZPNY8K65P7474B0MY24EK",
+	"minTime": 1762603204354,
+	"maxTime": 1762610400000,
+	"stats": {
+		"numSamples": 525987,
+		"numSeries": 838,
+		"numChunks": 4018
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01K9HZPNY8K65P7474B0MY24EK"
+		]
+	},
+	"version": 1
+}

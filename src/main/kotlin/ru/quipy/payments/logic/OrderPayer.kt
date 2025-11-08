@@ -41,13 +41,13 @@ class OrderPayer(
             accountProperties.parallelRequests,
             0L,
             TimeUnit.MILLISECONDS,
-            ArrayBlockingQueue<Runnable>(accountProperties.parallelRequests),
+            ArrayBlockingQueue<Runnable>(500),
             NamedThreadFactory("payment-submission-executor"),
             ThreadPoolExecutor.AbortPolicy()
         )
     }
 
-    private val rateLimit: SlidingWindowRateLimiter by lazy {
+    private val slidingWindowRateLimiter: SlidingWindowRateLimiter by lazy {
         SlidingWindowRateLimiter(
             rate = accountProperties.rateLimitPerSec.toLong(),
             window = Duration.ofSeconds(1),
@@ -59,12 +59,17 @@ class OrderPayer(
         paymentProcessingPlannedCounter.increment()
 
         val task = Runnable {
-            parallelLimiter.acquire()
-            while (!rateLimit.tick()) {
-                Thread.sleep(Random().nextInt(0, 10).toLong())
+            if (!parallelLimiter.tryAcquire(10, TimeUnit.MILLISECONDS)) {
+                logger.debug("Parallel limiter acquisition failed for order $orderId")
+                return@Runnable
             }
-            paymentProcessingStartedCounter.increment()
+
             try {
+                while (!slidingWindowRateLimiter.tick()) {
+                    Thread.sleep(Random().nextInt(0, 5).toLong())
+                }
+
+                paymentProcessingStartedCounter.increment()
                 val createdEvent = paymentESService.create {
                     it.create(paymentId, orderId, amount)
                 }
@@ -87,7 +92,7 @@ class OrderPayer(
             paymentExecutor.execute(transaction)
             return createdAt
         } catch (_: RejectedExecutionException) {
-            throw TooManyRequestsException()
+            throw TooManyRequestsException(10)
         }
     }
 }
