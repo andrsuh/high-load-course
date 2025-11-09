@@ -5,7 +5,6 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Metrics
-import io.micrometer.core.instrument.Timer
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -63,19 +62,9 @@ class PaymentExternalSystemAdapterImpl(
         .tag("account", accountName)
         .tag("service", serviceName)
         .register(meterRegistry)
-    private val semaphoreTimeoutCounter: Counter = Counter.builder("payment.semaphore.timeouts.total")
-        .description("Total number of requests that timed out waiting for semaphore")
-        .tag("account", accountName)
-        .tag("service", serviceName)
-        .register(meterRegistry)
-    private val semaphoreWaitTimer: Timer = Timer.builder("payment.semaphore.wait.duration")
-        .description("Time spent waiting for semaphore acquisition")
-        .tag("account", accountName)
-        .tag("service", serviceName)
-        .register(meterRegistry)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        logger.debug("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
 
@@ -96,14 +85,27 @@ class PaymentExternalSystemAdapterImpl(
                 .build()
 
             client.newCall(request).execute().use { response ->
-                val body = try {
+                var body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                while (!body.result) {
+                    client.newCall(request).execute().use { response ->
+                        logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}\nWaiting 200ms")
+                        Thread.sleep(Duration.ofMillis(200))
+                        body = try {
+                            mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                        } catch (e: Exception) {
+                            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                        }
+                    }
+                }
+
+                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}")
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                 // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
