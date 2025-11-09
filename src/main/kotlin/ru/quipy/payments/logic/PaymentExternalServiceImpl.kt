@@ -94,7 +94,7 @@ class PaymentExternalSystemAdapterImpl(
 
                 while (!body.result) {
                     client.newCall(request).execute().use { response ->
-                        logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}\nWaiting 200ms")
+                        logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}\nWaiting 200ms")
                         Thread.sleep(Duration.ofMillis(200))
                         body = try {
                             mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
@@ -105,7 +105,7 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}")
+                logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}")
 
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                 // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
