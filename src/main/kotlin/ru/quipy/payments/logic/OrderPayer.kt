@@ -29,12 +29,12 @@ class OrderPayer(
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(16_000)
+    private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(20_000)
     private val gauge = Gauge.builder("queue.size", linkedBlockingQueue) { it.size.toDouble() }.register(registry)
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        2000,
+        2000,
         0L,
         TimeUnit.SECONDS,
         linkedBlockingQueue,
