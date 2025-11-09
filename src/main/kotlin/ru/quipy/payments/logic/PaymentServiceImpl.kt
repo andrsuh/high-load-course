@@ -22,7 +22,7 @@ class PaymentSystemImpl(
 
     override fun getLeakingBucket(waitingTime: Duration): LeakingBucketRateLimiter {
         val bucketSize = paymentAccounts.sumOf {
-            it.getRateLimit() * (waitingTime.toMillis() - (it.getProcessingTime().toMillis() * 2.5)) / 1000
+            it.getRateLimit() * (waitingTime.toMillis() - (it.getProcessingTime().toMillis() * 2)) / 1000
         }
         return LeakingBucketRateLimiter(
             rate = paymentAccounts.sumOf { it.getRateLimit() },
