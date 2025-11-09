@@ -41,7 +41,7 @@ class PaymentExternalSystemAdapterImpl(
     private val processingTime = properties.averageProcessingTime
 
     private val client = OkHttpClient.Builder()
-        .callTimeout(3, TimeUnit.SECONDS)
+        .callTimeout(4, TimeUnit.SECONDS)
         .build()
 
     private val rateLimiter = SlidingWindowRateLimiter(
