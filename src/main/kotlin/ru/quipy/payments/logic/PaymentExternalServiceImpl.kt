@@ -92,6 +92,10 @@ class PaymentExternalSystemAdapterImpl(
             val maxRetries = 3
 
             while (currentRetry < maxRetries) {
+                if (now()+processingTime.toMillis() > deadline) {
+                    logger.error("too late for this payment")
+                    break
+                }
                 val start  = now()
 
                 var body: ExternalSysResponse? = null
@@ -124,6 +128,16 @@ class PaymentExternalSystemAdapterImpl(
                                 "message", message
                             )
                         ).increment()
+
+                        // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+                        // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(body?.result ?: false, now(), transactionId, reason = body?.message)
+                        }
+
+                    if (body?.result ?: false) {
+                        break
+                    }
 
                     currentRetry++
                 }
