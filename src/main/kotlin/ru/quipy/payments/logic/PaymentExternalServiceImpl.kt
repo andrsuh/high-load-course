@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Metrics
+import io.micrometer.core.instrument.Tags
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -15,6 +16,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -38,7 +40,9 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
     private val processingTime = properties.averageProcessingTime
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient.Builder()
+        .callTimeout(3, TimeUnit.SECONDS)
+        .build()
 
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
@@ -84,35 +88,49 @@ class PaymentExternalSystemAdapterImpl(
                 .post(emptyBody)
                 .build()
 
-            client.newCall(request).execute().use { response ->
-                var body = try {
-                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
-                }
+            var  currentRetry = 0
+            val maxRetries = 3
 
-                while (!body.result) {
+            while (currentRetry < maxRetries) {
+                val start  = now()
+
+                var body: ExternalSysResponse? = null
+                try {
                     client.newCall(request).execute().use { response ->
-                        logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}\nWaiting 200ms")
-                        Thread.sleep(Duration.ofMillis(200))
                         body = try {
                             mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                         } catch (e: Exception) {
                             logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                            ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                         }
                     }
+                }   catch (e: Exception) {} finally {
+                    registerRequestTime(Duration.ofMillis(now() - start))
+
+                    var message: String
+                    if (body == null) {
+                        message = "exception cause"
+                        logger.warn("[$accountName] Payment timed out for txId: $transactionId, payment: $paymentId, message: $message with code")
+                    } else {
+                        message = body.message?: "message is null"
+                        logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code")
+                    }
+                    meterRegistry.counter(
+                            "payment.requests.retry.message",
+                            Tags.of(
+                                "account", accountName,
+                                "service", serviceName,
+                                "transactionId", transactionId.toString(),
+                                "message", message
+                            )
+                        ).increment()
+
+                    currentRetry++
                 }
 
-                logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message} with code ${response.code}")
-
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
             }
+
+
         } finally {
             semaphore.release()
         }
@@ -136,6 +154,16 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
+    fun registerRequestTime(timeTaken: Duration) {
+        meterRegistry.counter(
+            "payment.requests.time",
+            Tags.of(
+                "account", accountName,
+                "service", serviceName,
+                "time", timeTaken.toSeconds().toString(),
+            )
+        ).increment()
+    }
 }
 
 fun now() = System.currentTimeMillis()
