@@ -16,7 +16,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
-val waitingTime = Duration.ofMillis(6000)
+val waitingTime = Duration.ofMillis(20000)
 
 @Service
 class OrderPayer {
@@ -34,8 +34,8 @@ class OrderPayer {
     private lateinit var bucket: LeakingBucketRateLimiter
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        50,
+        50,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(8_000),
