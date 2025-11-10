@@ -20,6 +20,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.Semaphore
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import ru.quipy.common.utils.NamedThreadFactory
 
 
@@ -80,7 +81,7 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Initialized with $optimalThreads threads, rate limit $rateLimitPerSec rps")
     }
 
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: AtomicInteger) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -94,9 +95,15 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
+        activeRequestsCount.incrementAndGet()
+
         try {
             asyncExecutor.execute {
-                executeWithSemaphore(paymentId, transactionId, amount, deadline, paymentStartedAt)
+                try {
+                    executeWithSemaphore(paymentId, transactionId, amount, deadline, paymentStartedAt)
+                } finally {
+                    activeRequestsCount.decrementAndGet()
+                }
             }
         } catch (ex: RejectedExecutionException) {
             metrics.incrementRejected(accountName, "executor_rejected")
@@ -104,6 +111,7 @@ class PaymentExternalSystemAdapterImpl(
                 it.logProcessing(false, now(), transactionId, reason = "Internal executor overloaded")
             }
             logger.error("[$accountName] Async executor saturated for payment $paymentId", ex)
+            activeRequestsCount.decrementAndGet()
         }
     }
 

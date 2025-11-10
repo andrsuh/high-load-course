@@ -102,15 +102,6 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
         )
     }
 
-    fun registerBufferQueueGauge(accountName: String, queueSizeSupplier: () -> Int) {
-        meterRegistry.gauge(
-            "payment_buffer_queue_size",
-            listOf(Tag.of("account", accountName)),
-            queueSizeSupplier,
-            { it.invoke().toDouble() }
-        )
-    }
-
     fun registerActiveRequestsGauge(accountName: String, activeRequestsSupplier: () -> Int) {
         meterRegistry.gauge(
             "payment_active_requests",
