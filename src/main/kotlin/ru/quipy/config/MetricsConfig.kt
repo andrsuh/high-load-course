@@ -4,7 +4,6 @@ import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tag
-import org.springframework.context.annotation.Configuration
 import org.springframework.stereotype.Component
 
 /**
@@ -22,10 +21,19 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
      * Counter метрики - бесконечно растущие счетчики для событий
      */
 
-    // Общее количество отправленных запросов
-    fun incrementSubmissions(accountName: String) {
-        Counter.builder("payment_submissions_total")
-            .description("Total number of payment submissions")
+    // Входящие запросы в платежную систему (до буферизации/очереди)
+    fun incrementIncoming(accountName: String) {
+        Counter.builder("payment_incoming_requests_total")
+            .description("Total number of incoming payment submissions")
+            .tag("account", accountName)
+            .register(meterRegistry)
+            .increment()
+    }
+
+    // Исходящие запросы во внешнюю систему (фактические HTTP вызовы)
+    fun incrementOutgoing(accountName: String) {
+        Counter.builder("payment_outgoing_requests_total")
+            .description("Total number of outgoing payment requests to provider")
             .tag("account", accountName)
             .register(meterRegistry)
             .increment()
@@ -70,6 +78,15 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
+    fun incrementRejected(accountName: String, reason: String) {
+        Counter.builder("payment_rejected_requests_total")
+            .description("Total number of payments rejected before dispatch")
+            .tag("account", accountName)
+            .tag("reason", sanitizeReason(reason))
+            .register(meterRegistry)
+            .increment()
+    }
+
     /**
      * Gauge метрики - моментальные значения, которые могут расти и убывать
      *
@@ -85,20 +102,11 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
         )
     }
 
-    fun registerActiveThreadsGauge(accountName: String, activeThreadsSupplier: () -> Int) {
+    fun registerBufferQueueGauge(accountName: String, queueSizeSupplier: () -> Int) {
         meterRegistry.gauge(
-            "payment_active_threads",
+            "payment_buffer_queue_size",
             listOf(Tag.of("account", accountName)),
-            activeThreadsSupplier,
-            { it.invoke().toDouble() }
-        )
-    }
-
-    fun registerSemaphoreAvailableGauge(accountName: String, availablePermitsSupplier: () -> Int) {
-        meterRegistry.gauge(
-            "payment_semaphore_available",
-            listOf(Tag.of("account", accountName)),
-            availablePermitsSupplier,
+            queueSizeSupplier,
             { it.invoke().toDouble() }
         )
     }

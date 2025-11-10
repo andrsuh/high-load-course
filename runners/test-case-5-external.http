@@ -8,7 +8,7 @@ Content-Type: application/json
   "token": "{{token}}",
   "branch": "case-5",
   "accounts": "acc-23",
-    "ratePerSecond": 3,
+  "ratePerSecond": 3,
   "testCount": 1050,
   "processingTimeMillis": 26000,
   "runits": 90,
