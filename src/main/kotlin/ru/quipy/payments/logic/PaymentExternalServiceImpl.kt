@@ -9,7 +9,7 @@ import okhttp3.ConnectionPool
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.SmoothRateLimiter
 import ru.quipy.config.PaymentMetrics
 import java.net.SocketTimeoutException
 import java.time.Duration
@@ -69,7 +69,7 @@ class PaymentExternalSystemAdapterImpl(
         NamedThreadFactory("payment-async-$accountName")
     )
 
-    private val rateLimiter = SlidingWindowRateLimiter(
+    private val rateLimiter = SmoothRateLimiter(
         rate = rateLimitPerSec.toLong(),
         window = Duration.ofSeconds(1)
     )
@@ -147,17 +147,23 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
-            while (!rateLimiter.tick()) {
-                if (now() >= deadline) {
+            // Проверяем сколько нужно ждать для rate limit
+            if (!rateLimiter.tryTick()) {
+                val waitTimeMs = rateLimiter.timeUntilNextSlot()
+                val currentTime = now()
+
+                if (currentTime + waitTimeMs >= deadline) {
                     metrics.incrementTimeout(accountName, "deadline_while_rate_limiting")
                     metrics.incrementFailure(accountName, "deadline_expired_while_rate_limiting")
                     paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Deadline expired while waiting for rate limit")
+                        it.logProcessing(false, currentTime, transactionId, reason = "Deadline expired while waiting for rate limit")
                     }
                     return
                 }
 
-                Thread.sleep(5)
+                // Ждем точное время - rate limiter обеспечит плавный поток
+                Thread.sleep(waitTimeMs)
+                rateLimiter.tick() // Теперь берем слот
             }
 
             executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt)
