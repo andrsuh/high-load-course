@@ -62,14 +62,14 @@ class PaymentExternalSystemAdapterImpl(
         .register(Metrics.globalRegistry)
 
     // Выбор чисел для постановки таймаута основан на
-    // а) информации, полученной в результате анализа квантилей длительности запросов
+    // а) информации, полученной в результате анализа квантилей длительности запросов (0.85 - 1.07)
     // б) averageProcessingTime из аккаунта (1.2 секунды)
     val client = OkHttpClient.Builder()
         .connectTimeout(2500, TimeUnit.MILLISECONDS)
-        .readTimeout(1600, TimeUnit.MILLISECONDS)
-        .writeTimeout(1600, TimeUnit.MILLISECONDS)
-        .callTimeout(2500, TimeUnit.MILLISECONDS)
+        .readTimeout(2000, TimeUnit.MILLISECONDS)
+        .writeTimeout(2000, TimeUnit.MILLISECONDS)
         .build()
+    val timeoutTime = 1010 * 1.4
     val slidingWindowRateLimiter = SlidingWindowRateLimiter(
         rate = properties.rateLimitPerSec.toLong(),
         window = Duration.ofSeconds(1)
@@ -137,7 +137,10 @@ class PaymentExternalSystemAdapterImpl(
                     }
                     val startTime = System.currentTimeMillis()
                     try {
-                        client.newCall(request).execute().use { response ->
+                        val timeoutMillis = minOf(timeoutTime.toLong(), deadline - startTime)
+                        val call = client.newCall(request)
+                        call.timeout().timeout(timeoutMillis, TimeUnit.MILLISECONDS)
+                        call.execute().use { response ->
                             val body = try {
                                 mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                             } catch (e: Exception) {
