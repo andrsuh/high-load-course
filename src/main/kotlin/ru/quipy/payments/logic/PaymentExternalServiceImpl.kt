@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.config.PaymentMetrics
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -27,6 +28,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    private val metrics: PaymentMetrics,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -70,10 +72,22 @@ class PaymentExternalSystemAdapterImpl(
         window = Duration.ofSeconds(1)
     )
 
+    init {
+        // Регистрируем Gauge метрики для мониторинга состояния очередей и потоков
+        metrics.registerQueueSizeGauge(accountName) { asyncExecutor.queue.size }
+        metrics.registerActiveThreadsGauge(accountName) { asyncExecutor.activeCount }
+        metrics.registerSemaphoreAvailableGauge(accountName) { parallelRequestSemaphore.availablePermits() }
+
+        logger.info("[$accountName] Initialized with $optimalThreads threads, rate limit $rateLimitPerSec rps")
+    }
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: java.util.concurrent.atomic.AtomicInteger) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
+
+        // Counter: увеличиваем счетчик отправленных запросов
+        metrics.incrementSubmissions(accountName)
 
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
@@ -85,18 +99,21 @@ class PaymentExternalSystemAdapterImpl(
 
         asyncExecutor.submit {
             try {
-                executeWithSemaphore(paymentId, transactionId, amount, deadline)
+                executeWithSemaphore(paymentId, transactionId, amount, deadline, paymentStartedAt)
             } finally {
                 activeRequestsCount.decrementAndGet()
             }
         }
     }
 
-    private fun executeWithSemaphore(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long) {
+    private fun executeWithSemaphore(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, paymentStartedAt: Long) {
+        val queueEnterTime = now()
         try {
             val now = now()
 
             if (now >= deadline) {
+                metrics.incrementTimeout(accountName, "deadline_before_semaphore")
+                metrics.incrementFailure(accountName, "deadline_expired_before_semaphore")
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Deadline expired before semaphore")
                 }
@@ -107,13 +124,21 @@ class PaymentExternalSystemAdapterImpl(
             val acquired = parallelRequestSemaphore.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS)
 
             if (!acquired) {
+                metrics.incrementTimeout(accountName, "semaphore_timeout")
+                metrics.incrementFailure(accountName, "semaphore_timeout")
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Semaphore timeout - deadline approaching")
                 }
                 return
             }
 
+            // Записываем время ожидания в очереди
+            val queueWaitTime = now() - queueEnterTime
+            metrics.recordQueueWaitTime(accountName, queueWaitTime)
+
             if (now() >= deadline) {
+                metrics.incrementTimeout(accountName, "deadline_during_semaphore_wait")
+                metrics.incrementFailure(accountName, "deadline_expired_during_semaphore_wait")
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Deadline expired during semaphore wait")
                 }
@@ -122,6 +147,8 @@ class PaymentExternalSystemAdapterImpl(
 
             while (!rateLimiter.tick()) {
                 if (now() >= deadline) {
+                    metrics.incrementTimeout(accountName, "deadline_while_rate_limiting")
+                    metrics.incrementFailure(accountName, "deadline_expired_while_rate_limiting")
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline expired while waiting for rate limit")
                     }
@@ -131,8 +158,9 @@ class PaymentExternalSystemAdapterImpl(
                 Thread.sleep(5)
             }
 
-            executePaymentRequest(paymentId, transactionId, amount, deadline)
+            executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt)
         } catch (e: InterruptedException) {
+            metrics.incrementFailure(accountName, "interrupted")
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Interrupted waiting for parallel slot")
             }
@@ -141,7 +169,8 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    private fun executePaymentRequest(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, attempt: Int = 1) {
+    private fun executePaymentRequest(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, paymentStartedAt: Long, attempt: Int = 1) {
+        val requestStartTime = now()
         try {
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
@@ -150,7 +179,12 @@ class PaymentExternalSystemAdapterImpl(
 
             client.newCall(request).execute().use { response ->
                 if (response.code == 429 && attempt <= 10) {
+                    // Метрика: повторная попытка из-за 429
+                    metrics.incrementRetry(accountName, 429)
+
                     if (now() >= deadline) {
+                        metrics.incrementTimeout(accountName, "429_retry_deadline")
+                        metrics.incrementFailure(accountName, "429_retry_aborted_deadline_expired")
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "429 retry aborted - deadline expired")
                         }
@@ -158,12 +192,17 @@ class PaymentExternalSystemAdapterImpl(
                     }
 
                     Thread.sleep(20)
-                    executePaymentRequest(paymentId, transactionId, amount, deadline, attempt + 1)
+                    executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt, attempt + 1)
                     return
                 }
 
                 if (!response.isSuccessful && attempt <= 3) {
+                    // Метрика: повторная попытка из-за ошибки
+                    metrics.incrementRetry(accountName, response.code)
+
                     if (now() >= deadline) {
+                        metrics.incrementTimeout(accountName, "retry_deadline")
+                        metrics.incrementFailure(accountName, "retry_aborted_deadline_expired")
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Retry aborted - deadline expired")
                         }
@@ -171,7 +210,7 @@ class PaymentExternalSystemAdapterImpl(
                     }
 
                     Thread.sleep(50)
-                    executePaymentRequest(paymentId, transactionId, amount, deadline, attempt + 1)
+                    executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt, attempt + 1)
                     return
                 }
 
@@ -184,6 +223,16 @@ class PaymentExternalSystemAdapterImpl(
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
+                // Записываем метрики успеха/провала и время выполнения
+                val totalDuration = now() - paymentStartedAt
+                metrics.recordRequestDuration(accountName, totalDuration)
+
+                if (body.result) {
+                    metrics.incrementSuccess(accountName)
+                } else {
+                    metrics.incrementFailure(accountName, body.message ?: "unknown")
+                }
+
                 paymentESService.update(paymentId) {
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
@@ -192,17 +241,29 @@ class PaymentExternalSystemAdapterImpl(
             when (e) {
                 is SocketTimeoutException -> {
                     if (attempt <= 3 && now() < deadline) {
+                        // Метрика: повторная попытка из-за таймаута
+                        metrics.incrementRetry(accountName, 0) // 0 = timeout
+
                         val delayMs = minOf(25 + (attempt * 10), 80).toLong()
                         Thread.sleep(delayMs)
-                        executePaymentRequest(paymentId, transactionId, amount, deadline, attempt + 1)
+                        executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt, attempt + 1)
                         return
                     }
+
+                    metrics.incrementTimeout(accountName, "socket_timeout")
+                    metrics.incrementFailure(accountName, "request_timeout_after_retries")
+                    val totalDuration = now() - paymentStartedAt
+                    metrics.recordRequestDuration(accountName, totalDuration)
+
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Request timeout after retries.")
                     }
                 }
 
                 else -> {
+                    metrics.incrementFailure(accountName, e.javaClass.simpleName)
+                    val totalDuration = now() - paymentStartedAt
+                    metrics.recordRequestDuration(accountName, totalDuration)
 
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = e.message)
