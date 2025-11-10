@@ -36,6 +36,8 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        private fun now() = System.currentTimeMillis()
     }
 
     private val serviceName = properties.serviceName
@@ -279,6 +281,8 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
-}
+    override fun getOptimalThreads(): Int = optimalThreads
 
-public fun now() = System.currentTimeMillis()
+    override fun getQueueSize(): Int = asyncExecutor.queue.size
+
+}
