@@ -9,12 +9,11 @@ import okhttp3.ConnectionPool
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.common.utils.SmoothRateLimiter
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.config.PaymentMetrics
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.LinkedBlockingQueue
@@ -103,8 +102,6 @@ class PaymentExternalSystemAdapterImpl(
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    private val parallelRequestSemaphore = Semaphore(optimalThreads)
-
     private val asyncExecutor = ThreadPoolExecutor(
         optimalThreads,
         optimalThreads,
@@ -114,19 +111,17 @@ class PaymentExternalSystemAdapterImpl(
         NamedThreadFactory("payment-async-$accountName")
     )
 
-    // КЛЮЧЕВАЯ ОПТИМИЗАЦИЯ: LeakingBucket вместо SmoothRateLimiter
-    // Он работает асинхронно через корутину и не блокирует потоки!
-    private val rateLimiter = ru.quipy.common.utils.LeakingBucketRateLimiter(
+    // LeakingBucketRateLimiter выполняет задачи с заданным rate
+    private val rateLimiter = LeakingBucketRateLimiter(
         rate = rateLimitPerSec.toLong(),
-        bucketSize = (rateLimitPerSec * 20), // буфер на 20 секунд пиковой нагрузки
-        window = Duration.ofSeconds(1)
+        window = Duration.ofSeconds(1),
+        bucketSize = rateLimitPerSec * 20  // Буфер на 20 секунд
     )
 
     init {
         // Регистрируем Gauge метрики для мониторинга состояния очередей и потоков
         metrics.registerQueueSizeGauge(accountName) { asyncExecutor.queue.size }
         metrics.registerActiveThreadsGauge(accountName) { asyncExecutor.activeCount }
-        metrics.registerSemaphoreAvailableGauge(accountName) { parallelRequestSemaphore.availablePermits() }
 
         logger.info("[$accountName] Initialized with $optimalThreads threads, rate limit $rateLimitPerSec rps")
     }
@@ -145,70 +140,37 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        activeRequestsCount.incrementAndGet()
+        // LeakingBucket контролирует rate - добавляем задачу в bucket
+        val admitted = rateLimiter.tick {
+            // Bucket выполнит эту задачу с заданным rate
+            activeRequestsCount.incrementAndGet()
 
-        asyncExecutor.submit {
-            try {
-                executeWithSemaphore(paymentId, transactionId, amount, deadline, paymentStartedAt)
-            } finally {
-                activeRequestsCount.decrementAndGet()
+            asyncExecutor.submit {
+                try {
+                    // Проверка deadline
+                    val currentTime = now()
+                    if (currentTime >= deadline) {
+                        metrics.incrementTimeout(accountName, "deadline_expired")
+                        metrics.incrementFailure(accountName, "deadline_expired")
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, currentTime, transactionId, reason = "Deadline expired")
+                        }
+                        return@submit
+                    }
+
+                    executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt)
+                } finally {
+                    activeRequestsCount.decrementAndGet()
+                }
             }
         }
-    }
 
-    private fun executeWithSemaphore(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, paymentStartedAt: Long) {
-        val queueEnterTime = now()
-        try {
-            // Оптимизация: одна проверка deadline перед основной работой
-            val currentTime = now()
-            if (currentTime >= deadline) {
-                metrics.incrementTimeout(accountName, "deadline_expired")
-                metrics.incrementFailure(accountName, "deadline_expired")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, currentTime, transactionId, reason = "Deadline expired")
-                }
-                return
-            }
-
-            val timeoutMs = deadline - currentTime
-            val acquired = parallelRequestSemaphore.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS)
-
-            if (!acquired) {
-                metrics.incrementTimeout(accountName, "semaphore_timeout")
-                metrics.incrementFailure(accountName, "semaphore_timeout")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Semaphore timeout")
-                }
-                return
-            }
-
-            // Записываем время ожидания в очереди
-            val queueWaitTime = now() - queueEnterTime
-            metrics.recordQueueWaitTime(accountName, queueWaitTime)
-
-            // Rate limiting: LeakingBucket.tick() возвращает false если нет места
-            // Ждем пока не освободится место в bucket
-            while (!rateLimiter.tick()) {
-                if (now() >= deadline) {
-                    metrics.incrementTimeout(accountName, "rate_limit_wait_deadline")
-                    metrics.incrementFailure(accountName, "deadline_expired_waiting_rate_limit")
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Deadline expired while waiting for rate limit")
-                    }
-                    return
-                }
-                // Короткая пауза перед повторной попыткой
-                Thread.sleep(10)
-            }
-
-            executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt)
-        } catch (e: InterruptedException) {
-            metrics.incrementFailure(accountName, "interrupted")
+        if (!admitted) {
+            // Bucket переполнен - отклоняем запрос
+            metrics.incrementFailure(accountName, "rate_limit_bucket_full")
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Interrupted")
+                it.logProcessing(false, now(), transactionId, reason = "Rate limit bucket full")
             }
-        } finally {
-            parallelRequestSemaphore.release()
         }
     }
 
