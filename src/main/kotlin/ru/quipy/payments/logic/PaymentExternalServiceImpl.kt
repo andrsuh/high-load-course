@@ -2,24 +2,22 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.ConnectionPool
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.SlidingWindowRateLimiter
-import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
-import ru.quipy.config.PaymentMetrics
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.common.utils.SmoothRateLimiter
+import ru.quipy.config.PaymentMetrics
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.Semaphore
-import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicInteger
 import ru.quipy.common.utils.NamedThreadFactory
 
@@ -38,6 +36,8 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        private fun now() = System.currentTimeMillis()
     }
 
     private val serviceName = properties.serviceName
@@ -60,34 +60,36 @@ class PaymentExternalSystemAdapterImpl(
 
     private val parallelRequestSemaphore = Semaphore(optimalThreads)
 
-    private val asyncExecutorQueueCapacity = maxOf(1000, optimalThreads * 4)
     private val asyncExecutor = ThreadPoolExecutor(
         optimalThreads,
-        optimalThreads * 2,
+        optimalThreads,
         60L,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(asyncExecutorQueueCapacity),
-        NamedThreadFactory("payment-async-$accountName"),
-        CallerBlockingRejectedExecutionHandler(Duration.ofSeconds(2))
+        LinkedBlockingQueue(500),
+        NamedThreadFactory("payment-async-$accountName")
     )
 
-    private val rateLimiter = SlidingWindowRateLimiter(
+    private val rateLimiter = SmoothRateLimiter(
         rate = rateLimitPerSec.toLong(),
         window = Duration.ofSeconds(1)
     )
 
     init {
+        // Регистрируем Gauge метрики для мониторинга состояния очередей и потоков
         metrics.registerQueueSizeGauge(accountName) { asyncExecutor.queue.size }
+        metrics.registerActiveThreadsGauge(accountName) { asyncExecutor.activeCount }
+        metrics.registerSemaphoreAvailableGauge(accountName) { parallelRequestSemaphore.availablePermits() }
+
         logger.info("[$accountName] Initialized with $optimalThreads threads, rate limit $rateLimitPerSec rps")
     }
 
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: AtomicInteger) {
+    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: java.util.concurrent.atomic.AtomicInteger) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
 
-        // Counter: увеличиваем счетчик входящих запросов
-        metrics.incrementIncoming(accountName)
+        // Counter: увеличиваем счетчик отправленных запросов
+        metrics.incrementSubmissions(accountName)
 
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
@@ -97,47 +99,35 @@ class PaymentExternalSystemAdapterImpl(
 
         activeRequestsCount.incrementAndGet()
 
-        try {
-            asyncExecutor.execute {
-                try {
-                    executeWithSemaphore(paymentId, transactionId, amount, deadline, paymentStartedAt)
-                } finally {
-                    activeRequestsCount.decrementAndGet()
-                }
+        asyncExecutor.submit {
+            try {
+                executeWithSemaphore(paymentId, transactionId, amount, deadline, paymentStartedAt)
+            } finally {
+                activeRequestsCount.decrementAndGet()
             }
-        } catch (ex: RejectedExecutionException) {
-            metrics.incrementRejected(accountName, "executor_rejected")
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Internal executor overloaded")
-            }
-            logger.error("[$accountName] Async executor saturated for payment $paymentId", ex)
-            activeRequestsCount.decrementAndGet()
         }
     }
 
     private fun executeWithSemaphore(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, paymentStartedAt: Long) {
         val queueEnterTime = now()
-        var acquired = false
         try {
             val now = now()
 
             if (now >= deadline) {
                 metrics.incrementTimeout(accountName, "deadline_before_semaphore")
                 metrics.incrementFailure(accountName, "deadline_expired_before_semaphore")
-                metrics.incrementRejected(accountName, "deadline_before_semaphore")
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Deadline expired before semaphore")
                 }
                 return
             }
 
-            val timeoutMs = maxOf(1L, deadline - now)
-            acquired = parallelRequestSemaphore.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS)
+            val timeoutMs = deadline - now
+            val acquired = parallelRequestSemaphore.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS)
 
             if (!acquired) {
                 metrics.incrementTimeout(accountName, "semaphore_timeout")
                 metrics.incrementFailure(accountName, "semaphore_timeout")
-                metrics.incrementRejected(accountName, "semaphore_timeout")
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Semaphore timeout - deadline approaching")
                 }
@@ -151,44 +141,45 @@ class PaymentExternalSystemAdapterImpl(
             if (now() >= deadline) {
                 metrics.incrementTimeout(accountName, "deadline_during_semaphore_wait")
                 metrics.incrementFailure(accountName, "deadline_expired_during_semaphore_wait")
-                metrics.incrementRejected(accountName, "deadline_during_semaphore_wait")
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Deadline expired during semaphore wait")
                 }
                 return
             }
 
-            while (!rateLimiter.tick()) {
-                if (now() >= deadline) {
+            // Проверяем сколько нужно ждать для rate limit
+            if (!rateLimiter.tryTick()) {
+                val waitTimeMs = rateLimiter.timeUntilNextSlot()
+                val currentTime = now()
+
+                if (currentTime + waitTimeMs >= deadline) {
                     metrics.incrementTimeout(accountName, "deadline_while_rate_limiting")
                     metrics.incrementFailure(accountName, "deadline_expired_while_rate_limiting")
-                    metrics.incrementRejected(accountName, "deadline_while_rate_limiting")
                     paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Deadline expired while waiting for rate limit")
+                        it.logProcessing(false, currentTime, transactionId, reason = "Deadline expired while waiting for rate limit")
                     }
                     return
                 }
 
-                Thread.sleep(5)
+                // Ждем точное время - rate limiter обеспечит плавный поток
+                Thread.sleep(waitTimeMs)
+                rateLimiter.tick() // Теперь берем слот
             }
 
             executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt)
         } catch (e: InterruptedException) {
             metrics.incrementFailure(accountName, "interrupted")
-            metrics.incrementRejected(accountName, "interrupted")
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Interrupted waiting for parallel slot")
             }
         } finally {
-            if (acquired) {
-                parallelRequestSemaphore.release()
-            }
+            parallelRequestSemaphore.release()
         }
     }
 
     private fun executePaymentRequest(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, paymentStartedAt: Long, attempt: Int = 1) {
+        val requestStartTime = now()
         try {
-            metrics.incrementOutgoing(accountName)
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
@@ -296,6 +287,8 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
-}
+    override fun getOptimalThreads(): Int = optimalThreads
 
-public fun now() = System.currentTimeMillis()
+    override fun getQueueSize(): Int = asyncExecutor.queue.size
+
+}

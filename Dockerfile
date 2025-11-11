@@ -6,8 +6,9 @@ RUN mvn dependency:go-offline
 COPY src src
 RUN mvn package
 
-FROM eclipse-temurin:17-jre-jammy
+FROM eclipse-temurin:17-jre
 
 COPY --from=build /app/target/*.jar /high-load-course.jar
 
 CMD ["java", "-jar", "/high-load-course.jar"]
+

@@ -3,51 +3,52 @@ package ru.quipy.payments.logic
 import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
-import ru.quipy.config.PaymentMetrics
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 
 @Service
-class OrderPayer(
-    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
-    private val paymentService: PaymentService,
-    private val paymentMetrics: PaymentMetrics,
-    @Value("\${payment.active.limit:256}") private val maxConcurrentRequests: Int,
-    @Value("\${payment.accounts:acc-23}") private val accountsProperty: String,
-) {
+class OrderPayer {
 
     companion object {
-        private val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
     }
 
-    private val activeRequests = AtomicInteger(0)
+    @Autowired
+    private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
-    private val accountLabels = accountsProperty
-        .split(",")
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .ifEmpty { listOf("default") }
+    @Autowired
+    private lateinit var paymentService: PaymentService
+
+    private val activeRequestsCount = AtomicInteger(0)
+
+    private var maxConcurrentRequests = 180
 
     @PostConstruct
     fun init() {
-        accountLabels.forEach { account ->
-            paymentMetrics.registerActiveRequestsGauge(account) { activeRequests.get() }
+        maxConcurrentRequests = calculateMaxConcurrentRequests()
+    }
+
+    private fun calculateMaxConcurrentRequests(): Int {
+        val totalThreads = paymentService.getTotalOptimalThreads()
+        return if (totalThreads > 0) {
+            (totalThreads * 1.2).toInt()
+        } else {
+            300
         }
     }
 
     fun canAcceptRequest(): Boolean {
-        return activeRequests.get() < maxConcurrentRequests
+        return activeRequestsCount.get() < maxConcurrentRequests
     }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
         if (createdAt >= deadline) {
-            logger.debug("Payment request skipped: deadline already expired for $paymentId")
             return createdAt
         }
 
@@ -55,12 +56,12 @@ class OrderPayer(
             it.create(paymentId, orderId, amount)
         }
 
-        paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, activeRequests)
+        paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, activeRequestsCount)
 
         return createdAt
     }
 
     fun getQueueSize(): Int {
-        return activeRequests.get()
+        return activeRequestsCount.get()
     }
 }
