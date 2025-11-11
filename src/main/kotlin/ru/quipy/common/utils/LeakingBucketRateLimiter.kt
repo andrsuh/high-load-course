@@ -27,11 +27,12 @@ class LeakingBucketRateLimiter(
     }
 
     private val releaseJob = rateLimiterScope.launch {
+        // Сглаживаем выполнение: вместо пачек по rate задач каждую секунду,
+        // выполняем задачи равномерно с интервалом window/rate
+        val intervalMs = window.toMillis() / rate
         while (true) {
-            delay(window.toMillis())
-            for (i in 0 until rate) {
-                queue.poll()?.invoke()
-            }
+            delay(intervalMs)
+            queue.poll()?.invoke()
         }
     }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
 

@@ -142,10 +142,9 @@ class PaymentExternalSystemAdapterImpl(
 
         // LeakingBucket контролирует rate - добавляем задачу в bucket
         val admitted = rateLimiter.tick {
-            // Bucket выполнит эту задачу с заданным rate
-            activeRequestsCount.incrementAndGet()
-
+            // Bucket выполнит эту задачу с заданным rate (11 rps)
             asyncExecutor.submit {
+                activeRequestsCount.incrementAndGet()
                 try {
                     // Проверка deadline
                     val currentTime = now()
