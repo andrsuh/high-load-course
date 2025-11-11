@@ -114,8 +114,11 @@ class PaymentExternalSystemAdapterImpl(
         NamedThreadFactory("payment-async-$accountName")
     )
 
-    private val rateLimiter = SmoothRateLimiter(
+    // КЛЮЧЕВАЯ ОПТИМИЗАЦИЯ: LeakingBucket вместо SmoothRateLimiter
+    // Он работает асинхронно через корутину и не блокирует потоки!
+    private val rateLimiter = ru.quipy.common.utils.LeakingBucketRateLimiter(
         rate = rateLimitPerSec.toLong(),
+        bucketSize = (rateLimitPerSec * 20), // буфер на 20 секунд пиковой нагрузки
         window = Duration.ofSeconds(1)
     )
 
@@ -183,8 +186,20 @@ class PaymentExternalSystemAdapterImpl(
             val queueWaitTime = now() - queueEnterTime
             metrics.recordQueueWaitTime(accountName, queueWaitTime)
 
-            // Rate limiting: используем блокирующий вызов для простоты
-            rateLimiter.tick()
+            // Rate limiting: LeakingBucket.tick() возвращает false если нет места
+            // Ждем пока не освободится место в bucket
+            while (!rateLimiter.tick()) {
+                if (now() >= deadline) {
+                    metrics.incrementTimeout(accountName, "rate_limit_wait_deadline")
+                    metrics.incrementFailure(accountName, "deadline_expired_waiting_rate_limit")
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = "Deadline expired while waiting for rate limit")
+                    }
+                    return
+                }
+                // Короткая пауза перед повторной попыткой
+                Thread.sleep(10)
+            }
 
             executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt)
         } catch (e: InterruptedException) {
