@@ -44,13 +44,11 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    // SlidingWindowRateLimiter - точный контроль RPS в скользящем окне
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
         window = Duration.ofSeconds(1)
     )
 
-    // Bulkhead - автоматическое управление параллельностью и очередью
     private val bulkhead = Bulkhead.of(
         "payment-bulkhead-$accountName",
         BulkheadConfig.custom()
@@ -59,12 +57,10 @@ class PaymentExternalSystemAdapterImpl(
             .build()
     )
 
-    // Для кейса 7: callTimeout вместо множества таймаутов
     private val client = OkHttpClient.Builder()
         .callTimeout(1350, TimeUnit.MILLISECONDS)
         .build()
 
-    // HashMap для отслеживания задержек retry
     private val retryDelayMap = HashMap<UUID, Long>()
 
     init {
@@ -76,7 +72,6 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UUID.randomUUID()
 
-        // Counter: увеличиваем счетчик отправленных запросов
         metrics.incrementSubmissions(accountName)
 
         paymentESService.update(paymentId) {
@@ -85,7 +80,6 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        // Retry логика: 3 попытки
         for (attempt in 1..3) {
             if (now() >= deadline) {
                 metrics.incrementTimeout(accountName, "deadline_expired_before_attempt_$attempt")
@@ -99,27 +93,22 @@ class PaymentExternalSystemAdapterImpl(
             val success = performBankPayment(transactionId, paymentId, amount, paymentStartedAt, deadline, activeRequestsCount, attempt)
 
             if (success) {
-                // Успех - убираем из map и выходим
                 retryDelayMap.remove(paymentId)
                 return
             }
 
-            // Не успех - retry логика для кейса 7
             if (attempt < 3) {
                 val delayMs = retryDelayMap[paymentId] ?: 0L
                 Thread.sleep(delayMs)
 
-                // Для кейса 7: сбрасываем delay вместо накопления
                 retryDelayMap[paymentId] = 0L
 
-                // Инкрементируем счетчик повторных запросов
                 metrics.incrementRepeatRequest(accountName)
 
                 logger.info("[$accountName] Payment $paymentId attempt $attempt failed, retrying (delay was ${delayMs}ms)")
             }
         }
 
-        // Все 3 попытки провалились - убираем из map
         retryDelayMap.remove(paymentId)
     }
 
@@ -170,9 +159,7 @@ class PaymentExternalSystemAdapterImpl(
     ): Boolean {
         var result = false
 
-        // Bulkhead управляет параллельностью и очередью
         bulkhead.executeCallable {
-            // SlidingWindowRateLimiter блокирует до освобождения слота RPS
             rateLimiter.tickBlocking()
 
             activeRequestsCount.incrementAndGet()
@@ -187,14 +174,12 @@ class PaymentExternalSystemAdapterImpl(
                     return@executeCallable
                 }
 
-                // Измеряем latency запроса к банку
                 val startTime = now()
 
                 client.newCall(request).execute().use { response ->
                     result = handleResult(response, transactionId, paymentId, attempt)
                 }
 
-                // Записываем latency
                 val latency = now() - startTime
                 metrics.recordBankRequestLatency(accountName, latency)
 
@@ -206,7 +191,6 @@ class PaymentExternalSystemAdapterImpl(
         return result
     }
 
-    // Вынесена обработка результата в отдельную функцию (для кейса 7)
     private fun handleResult(
         response: Response,
         transactionId: UUID,
@@ -222,7 +206,6 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, attempt: $attempt, succeeded: ${body.result}, message: ${body.message}")
 
-        // Записываем метрики успеха/провала
         if (body.result) {
             metrics.incrementSuccess(accountName)
         } else {
