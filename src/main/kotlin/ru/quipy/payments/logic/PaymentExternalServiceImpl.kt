@@ -7,7 +7,7 @@ import io.github.resilience4j.bulkhead.BulkheadConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
-import okhttp3.ConnectionPool
+import okhttp3.Response
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -55,18 +55,16 @@ class PaymentExternalSystemAdapterImpl(
         "payment-bulkhead-$accountName",
         BulkheadConfig.custom()
             .maxConcurrentCalls(parallelRequests)
-            .maxWaitDuration(Duration.ofSeconds(30))
+            .maxWaitDuration(Duration.ofMillis(1_000_000))
             .build()
     )
 
+    // Для кейса 7: callTimeout вместо множества таймаутов
     private val client = OkHttpClient.Builder()
-        .connectionPool(ConnectionPool(parallelRequests * 2, 5, TimeUnit.MINUTES))
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(1350, TimeUnit.MILLISECONDS)
         .build()
 
-    // HashMap для отслеживания задержек retry для каждого payment
+    // HashMap для отслеживания задержек retry
     private val retryDelayMap = HashMap<UUID, Long>()
 
     init {
@@ -88,9 +86,6 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         // Retry логика: 3 попытки
-        // 1-я попытка: сразу (delay = 0)
-        // 2-я попытка: после delay = averageProcessingTime
-        // 3-я попытка: после delay = averageProcessingTime * 2
         for (attempt in 1..3) {
             if (now() >= deadline) {
                 metrics.incrementTimeout(accountName, "deadline_expired_before_attempt_$attempt")
@@ -109,15 +104,18 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
-            // Не успех - вычисляем задержку для следующей попытки
+            // Не успех - retry логика для кейса 7
             if (attempt < 3) {
-                val currentDelay = retryDelayMap[paymentId] ?: 0L
-                Thread.sleep(currentDelay)
+                val delayMs = retryDelayMap[paymentId] ?: 0L
+                Thread.sleep(delayMs)
 
-                // Увеличиваем задержку для следующей попытки
-                retryDelayMap[paymentId] = currentDelay + requestAverageProcessingTime.toMillis()
+                // Для кейса 7: сбрасываем delay вместо накопления
+                retryDelayMap[paymentId] = 0L
 
-                logger.info("[$accountName] Payment $paymentId attempt $attempt failed, will retry after ${currentDelay}ms")
+                // Инкрементируем счетчик повторных запросов
+                metrics.incrementRepeatRequest(accountName)
+
+                logger.info("[$accountName] Payment $paymentId attempt $attempt failed, retrying (delay was ${delayMs}ms)")
             }
         }
 
@@ -189,38 +187,53 @@ class PaymentExternalSystemAdapterImpl(
                     return@executeCallable
                 }
 
+                // Измеряем latency запроса к банку
+                val startTime = now()
+
                 client.newCall(request).execute().use { response ->
-                    val body = try {
-                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-                    }
-
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, attempt: $attempt, succeeded: ${body.result}, message: ${body.message}")
-
-                    // Записываем метрики успеха/провала и время выполнения
-                    val totalDuration = now() - paymentStartedAt
-                    metrics.recordRequestDuration(accountName, totalDuration)
-
-                    if (body.result) {
-                        metrics.incrementSuccess(accountName)
-                    } else {
-                        metrics.incrementFailure(accountName, body.message ?: "unknown")
-                    }
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                    }
-
-                    result = body.result
+                    result = handleResult(response, transactionId, paymentId, attempt)
                 }
+
+                // Записываем latency
+                val latency = now() - startTime
+                metrics.recordBankRequestLatency(accountName, latency)
+
             } finally {
                 activeRequestsCount.decrementAndGet()
             }
         }
 
         return result
+    }
+
+    // Вынесена обработка результата в отдельную функцию (для кейса 7)
+    private fun handleResult(
+        response: Response,
+        transactionId: UUID,
+        paymentId: UUID,
+        attempt: Int
+    ): Boolean {
+        val body = try {
+            mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+        } catch (e: Exception) {
+            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+        }
+
+        logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, attempt: $attempt, succeeded: ${body.result}, message: ${body.message}")
+
+        // Записываем метрики успеха/провала
+        if (body.result) {
+            metrics.incrementSuccess(accountName)
+        } else {
+            metrics.incrementFailure(accountName, body.message ?: "unknown")
+        }
+
+        paymentESService.update(paymentId) {
+            it.logProcessing(body.result, now(), transactionId, reason = body.message)
+        }
+
+        return body.result
     }
 
     override fun price() = properties.price

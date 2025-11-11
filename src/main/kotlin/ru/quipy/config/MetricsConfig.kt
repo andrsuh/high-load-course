@@ -137,6 +137,15 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
+    // Повторные запросы (для кейса 7)
+    fun incrementRepeatRequest(accountName: String) {
+        Counter.builder("repeat_request")
+            .description("Total number of repeat requests to bank")
+            .tag("account", accountName)
+            .register(meterRegistry)
+            .increment()
+    }
+
     /**
      * Summary метрики - для измерения времени выполнения с квантилями
      *
@@ -159,6 +168,16 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .publishPercentiles(0.5, 0.85, 0.95, 0.99)
             .register(meterRegistry)
             .record(waitTimeMs.toDouble())
+    }
+
+    // Latency запросов к банку (для кейса 7)
+    fun recordBankRequestLatency(accountName: String, latencyMs: Long) {
+        DistributionSummary.builder("request_latency")
+            .description("Bank request latency in milliseconds")
+            .tag("account", accountName)
+            .publishPercentiles(0.9, 0.99, 0.999, 0.9999) // 90%, 99%, 99.9%, 99.99% квантили
+            .register(meterRegistry)
+            .record(latencyMs.toDouble())
     }
 
     // Утилита для очистки reason от специальных символов
