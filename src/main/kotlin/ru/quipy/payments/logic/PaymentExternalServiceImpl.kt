@@ -58,17 +58,21 @@ class PaymentExternalSystemAdapterImpl(
     private val optimalThreads = calculateOptimalThreads()
 
     private fun calculateOptimalThreads(): Int {
+        // КЛЮЧЕВАЯ ОПТИМИЗАЦИЯ: parallelRequests - это максимум ОДНОВРЕМЕННЫХ запросов
+        // Мы должны использовать его полностью, чтобы загрузить аккаунт на 100%
+
         // Базовый расчет: сколько потоков нужно для достижения RPS с учетом среднего времени обработки
         val threadsForRps = (rateLimitPerSec * requestAverageProcessingTime.seconds).toInt()
 
-        // Учитываем ограничение parallelRequests - нельзя превышать
-        val threadsLimitedByParallel = parallelRequests
+        // НО! parallelRequests - это жесткое ограничение на параллельные запросы от провайдера
+        // Используем его как базу, а не как ограничение
+        val baseThreads = parallelRequests
 
-        // Берем минимум, чтобы не превысить parallelRequests, но максимизировать использование RPS
-        val result = minOf(threadsForRps, threadsLimitedByParallel)
+        // Берем максимум из двух, но не превышаем parallelRequests * 1.5 для запаса
+        val result = maxOf(baseThreads, minOf(threadsForRps, (baseThreads * 1.5).toInt()))
 
-        logger.info("[$accountName] Calculated threads: threadsForRps=$threadsForRps, parallelLimit=$threadsLimitedByParallel, final=$result")
-        return maxOf(result, 10) // минимум 10 потоков
+        logger.info("[$accountName] Calculated threads: threadsForRps=$threadsForRps, parallelLimit=$parallelRequests, final=$result (using parallelRequests as base)")
+        return result
     }
 
     /**
