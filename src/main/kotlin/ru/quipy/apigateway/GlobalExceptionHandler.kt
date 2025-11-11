@@ -26,7 +26,7 @@ class GlobalExceptionHandler() {
     @ExceptionHandler(DeadlineExceededException::class)
     fun handleUnprocessableEntity(): ResponseEntity<String> {
         return ResponseEntity
-            .status(HttpStatus.UNPROCESSABLE_ENTITY)
+            .status(HttpStatus.OK)
             .build()
     }
 }

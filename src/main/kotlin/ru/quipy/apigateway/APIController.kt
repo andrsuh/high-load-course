@@ -54,8 +54,8 @@ class APIController(private val orderRepository: OrderRepository, private val or
     private val tokenBucketRateLimiter: TokenBucketRateLimiter by lazy {
         TokenBucketRateLimiter(
             rate = 11,
-            bucketMaxCapacity = 130,
-            startBucket = 130,
+            bucketMaxCapacity = 140,
+            startBucket = 140,
             window = 1000,
             timeUnit = TimeUnit.MILLISECONDS,
         )
@@ -64,8 +64,12 @@ class APIController(private val orderRepository: OrderRepository, private val or
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
 
+        if (deadline < System.currentTimeMillis()) {
+            throw DeadlineExceededException()
+        }
+
         if (!tokenBucketRateLimiter.tick()) {
-            throw TooManyRequestsException(retryAfterMillisecond = 50)
+            throw TooManyRequestsException(retryAfterMillisecond = 10)
         }
 
         logger.info("Trying to pay order $orderId : $deadline")
