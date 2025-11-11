@@ -25,10 +25,20 @@ class OrderPayer {
 
     private val activeRequestsCount = AtomicInteger(0)
 
-    private val maxConcurrentRequests = 180
+    private var maxConcurrentRequests = 180
 
     @PostConstruct
     fun init() {
+        maxConcurrentRequests = calculateMaxConcurrentRequests()
+    }
+
+    private fun calculateMaxConcurrentRequests(): Int {
+        val totalThreads = paymentService.getTotalOptimalThreads()
+        return if (totalThreads > 0) {
+            (totalThreads * 1.2).toInt()
+        } else {
+            300
+        }
     }
 
     fun canAcceptRequest(): Boolean {
