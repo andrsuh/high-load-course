@@ -68,7 +68,6 @@ class APIController(
             val queueSize = orderPayer.getQueueSize()
             val retryAfterMs = minOf(500, 50 + queueSize * 5)
 
-            // Возвращаем "мягкий отказ" без исключений
             val response = ErrorResponse(
                 message = "System overloaded. Please retry later.",
                 retryAfter = retryAfterMs

@@ -44,13 +44,11 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    // SlidingWindowRateLimiter - точный контроль RPS в скользящем окне
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
         window = Duration.ofSeconds(1)
     )
 
-    // Bulkhead - автоматическое управление параллельностью и очередью
     private val bulkhead = Bulkhead.of(
         "payment-bulkhead-$accountName",
         BulkheadConfig.custom()
@@ -66,7 +64,6 @@ class PaymentExternalSystemAdapterImpl(
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    // HashMap для отслеживания задержек retry для каждого payment
     private val retryDelayMap = HashMap<UUID, Long>()
 
     init {
@@ -87,10 +84,6 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        // Retry логика: 3 попытки
-        // 1-я попытка: сразу (delay = 0)
-        // 2-я попытка: после delay = averageProcessingTime
-        // 3-я попытка: после delay = averageProcessingTime * 2
         for (attempt in 1..3) {
             if (now() >= deadline) {
                 metrics.incrementTimeout(accountName, "deadline_expired_before_attempt_$attempt")
@@ -104,24 +97,20 @@ class PaymentExternalSystemAdapterImpl(
             val success = performBankPayment(transactionId, paymentId, amount, paymentStartedAt, deadline, activeRequestsCount, attempt)
 
             if (success) {
-                // Успех - убираем из map и выходим
                 retryDelayMap.remove(paymentId)
                 return
             }
 
-            // Не успех - вычисляем задержку для следующей попытки
             if (attempt < 3) {
                 val currentDelay = retryDelayMap[paymentId] ?: 0L
                 Thread.sleep(currentDelay)
 
-                // Увеличиваем задержку для следующей попытки
                 retryDelayMap[paymentId] = currentDelay + requestAverageProcessingTime.toMillis()
 
                 logger.info("[$accountName] Payment $paymentId attempt $attempt failed, will retry after ${currentDelay}ms")
             }
         }
 
-        // Все 3 попытки провалились - убираем из map
         retryDelayMap.remove(paymentId)
     }
 
@@ -172,14 +161,11 @@ class PaymentExternalSystemAdapterImpl(
     ): Boolean {
         var result = false
 
-        // Bulkhead управляет параллельностью и очередью
         bulkhead.executeCallable {
-            // SlidingWindowRateLimiter блокирует до освобождения слота RPS
             rateLimiter.tickBlocking()
 
             activeRequestsCount.incrementAndGet()
             try {
-                // Проверка deadline
                 if (now() >= deadline) {
                     metrics.incrementTimeout(accountName, "deadline_expired_in_request")
                     metrics.incrementFailure(accountName, "deadline_expired")
@@ -199,7 +185,6 @@ class PaymentExternalSystemAdapterImpl(
 
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, attempt: $attempt, succeeded: ${body.result}, message: ${body.message}")
 
-                    // Записываем метрики успеха/провала и время выполнения
                     val totalDuration = now() - paymentStartedAt
                     metrics.recordRequestDuration(accountName, totalDuration)
 
