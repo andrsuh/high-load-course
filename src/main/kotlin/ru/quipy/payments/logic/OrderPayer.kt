@@ -42,7 +42,7 @@ class OrderPayer(
             11,
             0L,
             TimeUnit.MILLISECONDS,
-            ArrayBlockingQueue<Runnable>(250),
+            ArrayBlockingQueue<Runnable>(300),
             NamedThreadFactory("payment-submission-executor"),
             ThreadPoolExecutor.AbortPolicy()
         )
@@ -70,7 +70,7 @@ class OrderPayer(
                 if (System.currentTimeMillis() >= deadline) {
                     throw DeadlineExceededException()
                 }
-                Thread.sleep(10)
+                Thread.sleep(5)
             }
 
             paymentProcessingStartedCounter.increment()
