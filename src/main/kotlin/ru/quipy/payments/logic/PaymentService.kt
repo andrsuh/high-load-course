@@ -3,12 +3,16 @@ package ru.quipy.payments.logic
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
-
 interface PaymentService {
     /**
      * Submit payment request to some external service.
      */
     fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, activeRequestsCount: AtomicInteger)
+
+    /**
+     * Get total optimal threads capacity across all accounts
+     */
+    fun getTotalOptimalThreads(): Int
 }
 
 /**
@@ -25,6 +29,10 @@ interface PaymentExternalSystemAdapter {
     fun price(): Int
 
     fun isEnabled(): Boolean
+
+    fun getOptimalThreads(): Int
+
+    fun getQueueSize(): Int
 }
 
 /**
@@ -38,6 +46,8 @@ data class PaymentAccountProperties(
     val price: Int,
     val averageProcessingTime: Duration = Duration.ofSeconds(11),
     val enabled: Boolean,
+    val threads: Int = 64,
+    val queueCapacity: Int = 1000,
 )
 
 /**
