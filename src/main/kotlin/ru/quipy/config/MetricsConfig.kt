@@ -111,6 +111,32 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
         )
     }
 
+    fun registerActiveThreadsGauge(accountName: String, activeThreadsSupplier: () -> Int) {
+        meterRegistry.gauge(
+            "payment_active_threads",
+            listOf(Tag.of("account", accountName)),
+            activeThreadsSupplier,
+            { it.invoke().toDouble() }
+        )
+    }
+
+    fun registerSemaphoreAvailableGauge(accountName: String, semaphoreSupplier: () -> Int) {
+        meterRegistry.gauge(
+            "payment_semaphore_available",
+            listOf(Tag.of("account", accountName)),
+            semaphoreSupplier,
+            { it.invoke().toDouble() }
+        )
+    }
+
+    fun incrementSubmissions(accountName: String) {
+        Counter.builder("payment_submissions_total")
+            .description("Total number of payment submissions sent to external system")
+            .tag("account", accountName)
+            .register(meterRegistry)
+            .increment()
+    }
+
     /**
      * Summary метрики - для измерения времени выполнения с квантилями
      *

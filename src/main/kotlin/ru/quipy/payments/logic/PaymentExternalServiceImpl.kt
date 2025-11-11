@@ -46,10 +46,51 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val optimalThreads = maxOf(
-        (rateLimitPerSec * requestAverageProcessingTime.seconds * 3).toInt(),
-        parallelRequests
-    )
+    /**
+     * Расчет оптимального количества потоков на основе метрик (Кейс 8 из теории).
+     *
+     * Формула: threads = rateLimitPerSec * averageProcessingTime
+     * - Один поток может выполнять 1/averageProcessingTime запросов в секунду
+     * - Для достижения rateLimitPerSec нужно threads = rate * avgTime
+     *
+     * Также учитываем parallelRequests - ограничение на параллельные запросы от провайдера
+     */
+    private val optimalThreads = calculateOptimalThreads()
+
+    private fun calculateOptimalThreads(): Int {
+        // Базовый расчет: сколько потоков нужно для достижения RPS с учетом среднего времени обработки
+        val threadsForRps = (rateLimitPerSec * requestAverageProcessingTime.seconds).toInt()
+
+        // Учитываем ограничение parallelRequests - нельзя превышать
+        val threadsLimitedByParallel = parallelRequests
+
+        // Берем минимум, чтобы не превысить parallelRequests, но максимизировать использование RPS
+        val result = minOf(threadsForRps, threadsLimitedByParallel)
+
+        logger.info("[$accountName] Calculated threads: threadsForRps=$threadsForRps, parallelLimit=$threadsLimitedByParallel, final=$result")
+        return maxOf(result, 10) // минимум 10 потоков
+    }
+
+    /**
+     * Расчет размера очереди для буферизации пиков нагрузки (Кейс 5 из теории).
+     *
+     * Из теории: нужно определить максимальное время буферизации пиковой нагрузки.
+     * Формула: queueSize = rateLimitPerSec * bufferTimeSeconds
+     *
+     * Для кейса 5 пики нагрузки относительно кратковременные, выделяем буфер на 60-90 секунд.
+     */
+    private val queueSize = calculateQueueSize()
+
+    private fun calculateQueueSize(): Int {
+        // Время буферизации: сколько секунд пиковой нагрузки хотим выдержать
+        val bufferTimeSeconds = 90
+
+        // Размер очереди = сколько запросов мы можем принять за это время при максимальном RPS
+        val calculatedSize = rateLimitPerSec * bufferTimeSeconds
+
+        logger.info("[$accountName] Calculated queue size: $calculatedSize (buffer for $bufferTimeSeconds sec at $rateLimitPerSec rps)")
+        return calculatedSize
+    }
 
     private val client = OkHttpClient.Builder()
         .connectionPool(ConnectionPool(optimalThreads * 2, 5, TimeUnit.MINUTES))
@@ -65,7 +106,7 @@ class PaymentExternalSystemAdapterImpl(
         optimalThreads,
         60L,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(500),
+        LinkedBlockingQueue(queueSize),
         NamedThreadFactory("payment-async-$accountName")
     )
 
@@ -111,25 +152,25 @@ class PaymentExternalSystemAdapterImpl(
     private fun executeWithSemaphore(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, paymentStartedAt: Long) {
         val queueEnterTime = now()
         try {
-            val now = now()
-
-            if (now >= deadline) {
-                metrics.incrementTimeout(accountName, "deadline_before_semaphore")
-                metrics.incrementFailure(accountName, "deadline_expired_before_semaphore")
+            // Оптимизация: одна проверка deadline перед основной работой
+            val currentTime = now()
+            if (currentTime >= deadline) {
+                metrics.incrementTimeout(accountName, "deadline_expired")
+                metrics.incrementFailure(accountName, "deadline_expired")
                 paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Deadline expired before semaphore")
+                    it.logProcessing(false, currentTime, transactionId, reason = "Deadline expired")
                 }
                 return
             }
 
-            val timeoutMs = deadline - now
+            val timeoutMs = deadline - currentTime
             val acquired = parallelRequestSemaphore.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS)
 
             if (!acquired) {
                 metrics.incrementTimeout(accountName, "semaphore_timeout")
                 metrics.incrementFailure(accountName, "semaphore_timeout")
                 paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Semaphore timeout - deadline approaching")
+                    it.logProcessing(false, now(), transactionId, reason = "Semaphore timeout")
                 }
                 return
             }
@@ -138,39 +179,14 @@ class PaymentExternalSystemAdapterImpl(
             val queueWaitTime = now() - queueEnterTime
             metrics.recordQueueWaitTime(accountName, queueWaitTime)
 
-            if (now() >= deadline) {
-                metrics.incrementTimeout(accountName, "deadline_during_semaphore_wait")
-                metrics.incrementFailure(accountName, "deadline_expired_during_semaphore_wait")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Deadline expired during semaphore wait")
-                }
-                return
-            }
-
-            // Проверяем сколько нужно ждать для rate limit
-            if (!rateLimiter.tryTick()) {
-                val waitTimeMs = rateLimiter.timeUntilNextSlot()
-                val currentTime = now()
-
-                if (currentTime + waitTimeMs >= deadline) {
-                    metrics.incrementTimeout(accountName, "deadline_while_rate_limiting")
-                    metrics.incrementFailure(accountName, "deadline_expired_while_rate_limiting")
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, currentTime, transactionId, reason = "Deadline expired while waiting for rate limit")
-                    }
-                    return
-                }
-
-                // Ждем точное время - rate limiter обеспечит плавный поток
-                Thread.sleep(waitTimeMs)
-                rateLimiter.tick() // Теперь берем слот
-            }
+            // Rate limiting: используем блокирующий вызов для простоты
+            rateLimiter.tick()
 
             executePaymentRequest(paymentId, transactionId, amount, deadline, paymentStartedAt)
         } catch (e: InterruptedException) {
             metrics.incrementFailure(accountName, "interrupted")
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Interrupted waiting for parallel slot")
+                it.logProcessing(false, now(), transactionId, reason = "Interrupted")
             }
         } finally {
             parallelRequestSemaphore.release()
@@ -178,7 +194,6 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     private fun executePaymentRequest(paymentId: UUID, transactionId: UUID, amount: Int, deadline: Long, paymentStartedAt: Long, attempt: Int = 1) {
-        val requestStartTime = now()
         try {
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
