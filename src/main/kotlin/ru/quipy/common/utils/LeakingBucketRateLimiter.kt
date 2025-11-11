@@ -27,8 +27,6 @@ class LeakingBucketRateLimiter(
     }
 
     private val releaseJob = rateLimiterScope.launch {
-        // Сглаживаем выполнение: вместо пачек по rate задач каждую секунду,
-        // выполняем задачи равномерно с интервалом window/rate
         val intervalMs = window.toMillis() / rate
         while (true) {
             delay(intervalMs)

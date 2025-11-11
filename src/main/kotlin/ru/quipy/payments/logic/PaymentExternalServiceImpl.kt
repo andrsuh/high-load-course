@@ -44,14 +44,11 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    // SlidingWindowRateLimiter - точный контроль RPS в скользящем окне
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
         window = Duration.ofSeconds(1)
     )
 
-    // Bulkhead - автоматическое управление параллельностью и очередью
-    // maxWaitDuration - время которое запрос может ждать в очереди
     private val bulkhead = Bulkhead.of(
         "payment-bulkhead-$accountName",
         BulkheadConfig.custom()
@@ -76,7 +73,6 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UUID.randomUUID()
 
-        // Counter: увеличиваем счетчик отправленных запросов
         metrics.incrementSubmissions(accountName)
 
         paymentESService.update(paymentId) {
@@ -91,9 +87,7 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            // Bulkhead управляет параллельностью и очередью
             bulkhead.executeCallable {
-                // SlidingWindowRateLimiter блокирует до освобождения слота RPS
                 rateLimiter.tickBlocking()
 
                 activeRequestsCount.incrementAndGet()
@@ -154,7 +148,6 @@ class PaymentExternalSystemAdapterImpl(
                 }
 
                 if (!response.isSuccessful && attempt <= 3) {
-                    // Метрика: повторная попытка из-за ошибки
                     metrics.incrementRetry(accountName, response.code)
 
                     if (now() >= deadline) {
@@ -180,7 +173,6 @@ class PaymentExternalSystemAdapterImpl(
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
-                // Записываем метрики успеха/провала и время выполнения
                 val totalDuration = now() - paymentStartedAt
                 metrics.recordRequestDuration(accountName, totalDuration)
 
