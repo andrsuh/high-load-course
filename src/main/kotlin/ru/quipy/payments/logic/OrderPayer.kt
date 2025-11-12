@@ -2,6 +2,7 @@ package ru.quipy.payments.logic
 
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.Gauge
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import java.time.Duration
 import org.slf4j.Logger
@@ -13,9 +14,7 @@ import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.*
 import io.micrometer.core.instrument.Timer
 import kotlin.time.DurationUnit
 import kotlin.time.measureTime
@@ -26,6 +25,10 @@ class OrderPayer(
 ) {
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+
+        private const val PARALLEL_HTTP = 2000
+        private const val MAX_WAIT_MS = 200L
+        private const val RATE_PER_SEC_LIMIT = 100
     }
 
     @Autowired
@@ -35,21 +38,41 @@ class OrderPayer(
     private lateinit var paymentService: PaymentService
 
     private val paymentExecutor = ThreadPoolExecutor(
-        11,
-        11,
-        0L,
-        TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(8_000),
-        NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
-    )
+        PARALLEL_HTTP,
+        PARALLEL_HTTP,
+        0L, TimeUnit.MILLISECONDS,
+        SynchronousQueue<Runnable>(),
+        NamedThreadFactory("payment-http-executor"),
+        CallerBlockingRejectedExecutionHandler(Duration.ofMillis(MAX_WAIT_MS))
+    ).apply { prestartAllCoreThreads() }
+
+    @Suppress("unused")
+    private val poolActiveGauge = Gauge.builder("payment.pool.active") { paymentExecutor.activeCount.toDouble() }
+        .description("Активные потоки в пуле")
+        .register(meterRegistry)
+
+    @Suppress("unused")
+    private val poolSizeGauge = Gauge.builder("payment.pool.size") { paymentExecutor.poolSize.toDouble() }
+        .description("Текущий размер пула")
+        .register(meterRegistry)
+
+    @Suppress("unused")
+    private val poolUtilizationGauge = Gauge.builder("payment.pool.utilization") {
+        paymentExecutor.activeCount.toDouble() / PARALLEL_HTTP
+    }.description("Доля занятых потоков")
+        .register(meterRegistry)
+
+    @Suppress("unused")
+    private val poolCompletedGauge = Gauge.builder("payment.pool.completed") { paymentExecutor.completedTaskCount.toDouble() }
+        .description("Сколько задач выполнено пулом")
+        .register(meterRegistry)
 
     private val acceptedRequestsCounter: Counter = Counter
         .builder("incoming.payments.accepted")
         .register(meterRegistry)
 
     private val slidingWindowLimiter = SlidingWindowRateLimiter(
-        rate = 10,
+        rate = RATE_PER_SEC_LIMIT.toLong(),
         window = Duration.ofSeconds(1)
     )
 
@@ -70,28 +93,44 @@ class OrderPayer(
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-        when {
-            !slidingWindowLimiter.tick() -> reject("rate_limit", 1000)
-            paymentExecutor.queue.remainingCapacity() == 0 -> reject("queue_full", 1000)
-            else -> acceptedRequestsCounter.increment()
+        if (!slidingWindowLimiter.tick()) {
+            reject("rate_limit", 1000)
         }
 
-        paymentExecutor.submit {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
+        try {
+            paymentExecutor.execute {
+                val createdEvent = paymentESService.create {
+                    it.create(
+                        paymentId,
+                        orderId,
+                        amount
+                    )
+                }
+                logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+                val paymentTime = measureTime {
+                    paymentService.submitPaymentRequest(
+                        paymentId,
+                        amount,
+                        createdAt,
+                        deadline)
+                }
+                requestLatency.record(paymentTime.toLong(DurationUnit.MILLISECONDS), TimeUnit.MILLISECONDS)
             }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
-            val paymentTime = measureTime {
-                paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
-            }
-            requestLatency.record(paymentTime.toLong(DurationUnit.MILLISECONDS), TimeUnit.MILLISECONDS)
+            acceptedRequestsCounter.increment()
+        } catch (e: RejectedExecutionException) {
+            reject("queue_full", 1000)
         }
+
         return createdAt
     }
 
     class TooManyRequestsException(val retryAfterMillis: Long) : RuntimeException("Too many incoming requests")
+
+    @jakarta.annotation.PreDestroy
+    fun shutdown() {
+        paymentExecutor.shutdown()
+        if (!paymentExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+            paymentExecutor.shutdownNow()
+        }
+    }
 }
