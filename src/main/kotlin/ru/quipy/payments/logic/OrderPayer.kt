@@ -1,6 +1,9 @@
 package ru.quipy.payments.logic
 
 import io.micrometer.core.instrument.MeterRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -34,6 +37,7 @@ class OrderPayer(registry: MeterRegistry) {
         LinkedBlockingQueue(290),
         NamedThreadFactory("payment-submission-executor")
     )
+    val executorScope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
     private val paymentExecutorQueueSize =
         registry.gauge("payment_executor_queue_size", paymentExecutor.queue) {
@@ -45,7 +49,7 @@ class OrderPayer(registry: MeterRegistry) {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-        paymentExecutor.submit {
+        executorScope.launch {
             val start = System.nanoTime()
             val createdEvent = paymentESService.create {
                 it.create(

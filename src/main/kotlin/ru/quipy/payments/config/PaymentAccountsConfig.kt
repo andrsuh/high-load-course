@@ -42,7 +42,6 @@ class PaymentAccountsConfig {
     @Bean
     fun accountAdapters(
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
-        metricsInterceptor: MetricsInterceptor,
         meterRegistry: MeterRegistry
     ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
@@ -66,7 +65,7 @@ class PaymentAccountsConfig {
                     paymentService,
                     paymentProviderHostPort,
                     token,
-                    metricsInterceptor,
+                    MetricsInterceptor(meterRegistry, it.accountName),
                     meterRegistry
                 )
             }
