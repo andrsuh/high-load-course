@@ -56,12 +56,13 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        limiter.tickBlocking()
+        throwIfTooManyRequests();
 
         try {
             semaphore.acquire()
             try {
-                limiter.tickBlocking()
+
+                throwIfTooManyRequests();
 
                 val request = Request.Builder().run {
                     url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
@@ -104,6 +105,15 @@ class PaymentExternalSystemAdapterImpl(
             semaphore.release()
         }
 
+    }
+
+    fun throwIfTooManyRequests() {
+        if (!limiter.tick()){
+            throw ResponseStatusException(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Rate limit exceeded. Try again later."
+            )
+        }
     }
 
     override fun price() = properties.price
