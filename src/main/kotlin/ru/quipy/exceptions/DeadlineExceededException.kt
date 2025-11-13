@@ -1,3 +1,5 @@
 package ru.quipy.exceptions
 
-class DeadlineExceededException : RuntimeException()
+import java.util.UUID
+
+class DeadlineExceededException() : RuntimeException()

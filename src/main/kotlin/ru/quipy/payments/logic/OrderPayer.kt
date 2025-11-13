@@ -38,50 +38,32 @@ class OrderPayer(
 
     private val paymentExecutor: ThreadPoolExecutor by lazy {
         ThreadPoolExecutor(
-            11,
-            11,
+            16,
+            16,
             0L,
             TimeUnit.MILLISECONDS,
-            ArrayBlockingQueue<Runnable>(300),
+            ArrayBlockingQueue<Runnable>(8_000),
             NamedThreadFactory("payment-submission-executor"),
             ThreadPoolExecutor.AbortPolicy()
         )
     }
 
-    private val slidingWindowRateLimiter: SlidingWindowRateLimiter by lazy {
-        SlidingWindowRateLimiter(
-            rate = accountProperties.rateLimitPerSec.toLong(),
-            window = Duration.ofSeconds(1),
-        )
-    }
-
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
-        val now = System.currentTimeMillis()
-        if (now >= deadline) throw DeadlineExceededException()
-
-        paymentProcessingPlannedCounter.increment()
-
-        if (!parallelLimiter.tryAcquire(5, TimeUnit.MILLISECONDS)) {
-            throw TooManyRequestsException(3)
-        }
-
-        try {
-            while (!slidingWindowRateLimiter.tick()) {
-                if (System.currentTimeMillis() >= deadline) {
-                    throw DeadlineExceededException()
-                }
-                Thread.sleep(5)
+        val createdAt = System.currentTimeMillis()
+        paymentExecutor.submit {
+            val createdEvent = paymentESService.create {
+                it.create(
+                    paymentId,
+                    orderId,
+                    amount
+                )
             }
 
-            paymentProcessingStartedCounter.increment()
+            logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
 
-            val event = paymentESService.create { it.create(paymentId, orderId, amount) }
-            paymentService.submitPaymentRequest(paymentId, amount, now, deadline)
-
-            return now
-        } finally {
-            parallelLimiter.release()
-            paymentProcessingCompletedCounter.increment()
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
+
+        return createdAt
     }
 }

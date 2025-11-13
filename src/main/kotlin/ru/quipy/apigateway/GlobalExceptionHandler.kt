@@ -5,11 +5,19 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import ru.quipy.core.EventSourcingService
 import ru.quipy.exceptions.DeadlineExceededException
 import ru.quipy.exceptions.TooManyRequestsException
+import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.logic.PaymentAggregateState
+import ru.quipy.payments.logic.logProcessing
+import ru.quipy.payments.logic.now
+import java.util.UUID
 
 @RestControllerAdvice
-class GlobalExceptionHandler() {
+class GlobalExceptionHandler(
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
+) {
     companion object {
         val logger = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)
     }
@@ -25,6 +33,7 @@ class GlobalExceptionHandler() {
 
     @ExceptionHandler(DeadlineExceededException::class)
     fun handleUnprocessableEntity(): ResponseEntity<String> {
+
         return ResponseEntity
             .status(HttpStatus.OK)
             .build()

@@ -64,12 +64,8 @@ class APIController(private val orderRepository: OrderRepository, private val or
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
 
-        if (deadline < System.currentTimeMillis()) {
-            throw DeadlineExceededException()
-        }
-
         if (!tokenBucketRateLimiter.tick()) {
-            throw TooManyRequestsException(retryAfterMillisecond = 10)
+            throw TooManyRequestsException(retryAfterMillisecond = 30)
         }
 
         logger.info("Trying to pay order $orderId : $deadline")
