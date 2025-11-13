@@ -16,6 +16,8 @@ import java.util.*
 import java.util.concurrent.Semaphore
 import ru.quipy.payments.api.PaymentMetric
 import java.util.concurrent.TimeUnit
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -40,6 +42,13 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
     private var rateLimiter = SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
     private val semaphore = Semaphore(parallelRequests, true)
+
+    val inSemaphoreCounter = Gauge.builder(
+            "availablePermits_in_semaphore",
+            java.util.function.Supplier { semaphore.availablePermits().toDouble() }
+        )
+            .description("availablePermits in semaphore for account $accountName")
+            .register(Metrics.globalRegistry)
 
     private val client = OkHttpClient.Builder().apply {
         if (properties.percentile90 != null) {

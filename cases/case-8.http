@@ -1,0 +1,15 @@
+### Run test locally
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "AcDc",
+  "token": "",
+  "ratePerSecond": 100,
+  "testCount": 5000,
+  "processingTimeMillis": 20000
+}
+
+### Stop running test to save time and resources
+# @timeout 120
+POST http://localhost:1234/test/stop/AcDc

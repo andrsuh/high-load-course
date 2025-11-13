@@ -15,38 +15,58 @@ import java.util.concurrent.TimeUnit
 import ru.quipy.apigateway.HttpMetrics
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
+import io.micrometer.core.instrument.Counter
 
 @Service
-class OrderPayer{
+class OrderPayer(
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val paymentService: PaymentService
+) {
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
     }
 
-    @Autowired
-    private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
-
-    @Autowired
-    private lateinit var paymentService: PaymentService
-
     private val linkedBlockingQueue = LinkedBlockingQueue<Runnable>(8000) 
+    private val paymentExecutor : ThreadPoolExecutor
 
-    val threadQueueCounter: Gauge = Gauge.builder(
-        "requests_in_thread_queue_total",
-        java.util.function.Supplier { linkedBlockingQueue.size.toDouble() }
-    )
-        .description("Total number of payment requests in queue")
-        .register(Metrics.globalRegistry)
+    private lateinit var threadQueueCounter: Gauge
+    private lateinit var activeCounter: Gauge
+    private lateinit var taskCounter: Counter
 
-    private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
-        0L,
-        TimeUnit.MILLISECONDS,
-        linkedBlockingQueue,
-        NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
-    )
+
+    init {
+        val maxThreads = paymentService.getAccountsProperties()
+            .maxOf { it.parallelRequests }
+
+        paymentExecutor = ThreadPoolExecutor(
+            maxThreads,
+            maxThreads,
+            0L,
+            TimeUnit.MILLISECONDS,
+            linkedBlockingQueue,
+            NamedThreadFactory("payment-submission-executor"),
+            CallerBlockingRejectedExecutionHandler()
+        )
+
+        threadQueueCounter = Gauge.builder(
+            "requests_in_thread_queue_total",
+            java.util.function.Supplier { linkedBlockingQueue.size.toDouble() }
+        )
+            .description("Total number of payment requests in queue")
+            .register(Metrics.globalRegistry)
+
+        activeCounter = Gauge.builder(
+            "active_threads_in_pool",
+            java.util.function.Supplier { paymentExecutor.activeCount.toDouble() }
+        )
+            .description("Number of active threads in payment thread pool")
+            .register(Metrics.globalRegistry)
+
+        taskCounter = Counter.builder("total_tasks_submitted")
+            .description("Total number of tasks submitted to payment thread pool")
+            .register(Metrics.globalRegistry)
+    }
 
     private fun processingSpeed(property : PaymentAccountProperties) : Double{
         return kotlin.math.min(property.rateLimitPerSec.toDouble(), property.parallelRequests.toDouble() / property.averageProcessingTime.toSeconds())
@@ -81,6 +101,7 @@ class OrderPayer{
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
             metrics.responceCounter.increment()
         }
+        taskCounter.increment()
         return Triple(createdAt,true,0)
     }
 
