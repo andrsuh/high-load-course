@@ -62,18 +62,17 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
-            ongoingWindow.acquire()
-            rateLimiter.tickBlocking()
-
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
             }.build()
 
+            ongoingWindow.acquire()
             var retryable = true
             while (retryable) {
+                rateLimiter.tickBlocking()
                 retryable = false
-                val client = buildClientWithTimeout(deadline)
+                val client = buildClientWithTimeout(deadline, 0.95)
                 try{
                     client.newCall(request).execute().use { response ->
                         addResponseTime(response)
@@ -140,23 +139,27 @@ class PaymentExternalSystemAdapterImpl(
 
     fun addResponseTime(response: Response){
         val executionTime = response.receivedResponseAtMillis - response.sentRequestAtMillis
-        if (responses.size >= responsesListSize - 1 ) responses.pollFirst()
+        if (responses.size >= responsesListSize - 1) responses.pollFirst()
         responses.offerLast(executionTime)
     }
 
-    fun buildClientWithTimeout(deadline: Long): OkHttpClient {
-        val timeout = count95Quantile().coerceIn(requestAverageProcessingTime, deadline - now())
+    fun buildClientWithTimeout(deadline: Long, quantilePercent: Double): OkHttpClient {
+        val timeout = countQuantileTime(quantilePercent).coerceIn(requestAverageProcessingTime, deadline - now())
 
-        return client.newBuilder().callTimeout(Duration.ofMillis(timeout)).build()
+        return client.newBuilder().callTimeout(Duration.ofMillis((timeout * 1.5).toLong())).build()
     }
 
-    fun count95Quantile(): Long {
-        val copy = responses.toList()
-        if (copy.isEmpty()){
-            return (requestAverageProcessingTime * 0.95).toLong()
+    fun countQuantileTime(quantilePercent: Double): Long {
+        if (quantilePercent <= 0 || quantilePercent >= 1){
+            return Long.MAX_VALUE
         }
 
-        val index = ((copy.size - 1) * 0.95).toInt().coerceIn(0, copy.size - 1)
+        val copy = responses.toList()
+        if (copy.isEmpty()){
+            return (requestAverageProcessingTime * quantilePercent).toLong()
+        }
+
+        val index = ((copy.size - 1) * quantilePercent).toInt().coerceIn(0, copy.size - 1)
         val quantileTime = copy.sorted()[index]
         metricsCollector.recordMaxRequestDuration(quantileTime, accountName)
 

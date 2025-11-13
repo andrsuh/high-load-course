@@ -40,8 +40,8 @@ class OrderPayer(
         metricsCollector.requestsQueueSizeRegister(queue);
 
         paymentExecutor = ThreadPoolExecutor(
-            backgroundWorkers,
-            backgroundWorkers,
+            50,
+            100,
             0L,
             TimeUnit.MILLISECONDS,
             queue,
@@ -72,8 +72,7 @@ class OrderPayer(
         val createdAt = System.currentTimeMillis()
         val averageProcessingTime = avgTimeKeeper.getAverage()
 
-        val maxProcessingTime = averageProcessingTime * 1.5
-        // TODO: поправить коэффициент из нормального распределения
+        val maxProcessingTime = averageProcessingTime * 1
 
         val queueProcessingTime = (paymentTaskQueue.size + backgroundWorkers) * maxProcessingTime / backgroundWorkers
 
