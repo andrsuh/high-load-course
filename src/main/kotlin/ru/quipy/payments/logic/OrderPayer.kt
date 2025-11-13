@@ -27,6 +27,8 @@ class OrderPayer(
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
 
         private const val PARALLEL_HTTP = 50
+
+        private const val CORE_POOL_SIZE = (1 * PARALLEL_HTTP).toInt()
         private const val MAX_WAIT_MS = 200L
         private const val RATE_PER_SEC_LIMIT = 100
     }
@@ -38,7 +40,7 @@ class OrderPayer(
     private lateinit var paymentService: PaymentService
 
     private val paymentExecutor = ThreadPoolExecutor(
-        PARALLEL_HTTP,
+        CORE_POOL_SIZE,
         PARALLEL_HTTP,
         0L, TimeUnit.MILLISECONDS,
         SynchronousQueue<Runnable>(),
@@ -58,7 +60,8 @@ class OrderPayer(
 
     @Suppress("unused")
     private val poolUtilizationGauge = Gauge.builder("payment.pool.utilization") {
-        paymentExecutor.activeCount.toDouble() / PARALLEL_HTTP
+        val currentSize = paymentExecutor.poolSize.coerceAtLeast(1)
+        paymentExecutor.activeCount.toDouble() / currentSize
     }.description("Доля занятых потоков")
         .register(meterRegistry)
 
