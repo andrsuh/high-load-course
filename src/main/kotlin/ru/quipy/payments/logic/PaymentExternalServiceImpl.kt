@@ -56,6 +56,8 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
+        limiter.tickBlocking()
+
         try {
             semaphore.acquire()
             try {

@@ -29,9 +29,6 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private var queueWaitingTime = Duration.ofSeconds(0)
-    private var queueLength = 1000
-
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
