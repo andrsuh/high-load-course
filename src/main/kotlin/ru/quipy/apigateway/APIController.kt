@@ -65,13 +65,13 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
 
         if (!bucketQueueMode.tick()) {
-            throw ResponseStatusException(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "Rate limit exceeded. Try again later."
-            )
+            return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "20")
+                .body(mapOf("error" to "Rate limit exceeded. Try again later."))
         }
 
         val paymentId = UUID.randomUUID()
@@ -80,11 +80,11 @@ class APIController {
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
-
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
 
-        return PaymentSubmissionDto(createdAt, paymentId)
+        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
+
 
     class PaymentSubmissionDto(
         val timestamp: Long,
