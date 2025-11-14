@@ -10,27 +10,22 @@ import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentAccountProperties
+import java.time.Duration
 import java.time.Instant
 import java.util.*
 
 @RestController
-class APIController(private val properties: PaymentAccountProperties) {
+class APIController {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
-
-    private val serviceName = properties.serviceName
-    private val accountName = properties.accountName
-    private val requestAverageProcessingTime = properties.averageProcessingTime
-    private val rateLimitPerSec = properties.rateLimitPerSec
-    private val parallelRequests = properties.parallelRequests
 
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = rateLimitPerSec.toLong(),
-        window = requestAverageProcessingTime)
+        rate = 8,
+        window = Duration.ofMillis(1200))
 
     @Autowired
     private lateinit var orderPayer: OrderPayer
@@ -74,9 +69,10 @@ class APIController(private val properties: PaymentAccountProperties) {
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
 
         val now = Instant.now().toEpochMilli()
+        val averageProcessingTime = 1200
 
         if (!limiter.tick()) {
-            if (deadline < now + requestAverageProcessingTime.toMillis()) {
+            if (deadline < now + averageProcessingTime) {
                 return ResponseEntity
                     .status(HttpStatus.GONE)
                     .body(mapOf("error" to "Deadline will expire before processing"))
