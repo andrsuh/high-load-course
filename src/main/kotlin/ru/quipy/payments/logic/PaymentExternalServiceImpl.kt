@@ -40,7 +40,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val limiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
-        window = Duration.ofSeconds(1)
+        window = Duration.ofMillis(700)
     )
 
     private val semaphore = Semaphore(parallelRequests, true)

@@ -23,7 +23,7 @@ class APIController {
     @Autowired
     private lateinit var orderRepository: OrderRepository
 
-    private val limiter = SlidingWindowRateLimiter(11, Duration.ofSeconds(1))
+    private val limiter = SlidingWindowRateLimiter(10, Duration.ofMillis(700))
     private val bucketQueueMode = LeakingBucketRateLimiter(11, Duration.ofSeconds(1), 280)
 
     @Autowired
@@ -67,7 +67,7 @@ class APIController {
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
 
-        if (!bucketQueueMode.tick()) {
+        if (!limiter.tick()) {
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", "20")
