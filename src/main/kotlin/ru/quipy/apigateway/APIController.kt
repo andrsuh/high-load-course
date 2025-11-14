@@ -12,19 +12,29 @@ import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import ru.quipy.payments.logic.PaymentAccountProperties
 import java.time.Duration
+import java.time.Instant
 import java.util.*
 
 @RestController
-class APIController {
+class APIController(private val properties: PaymentAccountProperties) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
+
+    private val serviceName = properties.serviceName
+    private val accountName = properties.accountName
+    private val requestAverageProcessingTime = properties.averageProcessingTime
+    private val rateLimitPerSec = properties.rateLimitPerSec
+    private val parallelRequests = properties.parallelRequests
+
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
 
-    private val limiter = SlidingWindowRateLimiter(10, Duration.ofMillis(700))
-    private val bucketQueueMode = LeakingBucketRateLimiter(11, Duration.ofSeconds(1), 280)
+    private val limiter = SlidingWindowRateLimiter(
+        rate = rateLimitPerSec.ToLong(),
+        window = requestAverageProcessingTime)
 
     @Autowired
     private lateinit var orderPayer: OrderPayer
@@ -67,11 +77,20 @@ class APIController {
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
 
+        val now = Instant.now().toEpochMilli()
+
         if (!limiter.tick()) {
+            if (deadline < now + requestAverageProcessingTime.toMillis()) {
+                return ResponseEntity
+                    .status(HttpStatus.GONE)
+                    .body(mapOf("error" to "Deadline will expire before processing"))
+            }
+
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
                 .body(mapOf("error" to "Rate limit exceeded. Try again later."))
         }
+
 
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {

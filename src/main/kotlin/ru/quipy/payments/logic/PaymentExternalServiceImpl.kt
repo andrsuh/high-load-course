@@ -7,12 +7,14 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.server.ResponseStatusException
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
+import java.time.Instant
 import java.util.*
 import java.util.concurrent.Semaphore
 
@@ -40,7 +42,7 @@ class PaymentExternalSystemAdapterImpl(
 
     private val limiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
-        window = Duration.ofMillis(700)
+        window = requestAverageProcessingTime
     )
 
     private val semaphore = Semaphore(parallelRequests, true)
@@ -56,7 +58,22 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        limiter.tickBlocking()
+        val now = Instant.now().toEpochMilli()
+
+        if (!limiter.tick()) {
+            if (deadline < now + requestAverageProcessingTime.toMillis()) {
+                throw ResponseStatusException(
+                    HttpStatus.GONE,
+                    "Deadline expired before request could be processed"
+                )
+
+            }
+
+            throw ResponseStatusException(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Rate limit exceeded. Try again later."
+            )
+        }
 
         try {
             semaphore.acquire()
