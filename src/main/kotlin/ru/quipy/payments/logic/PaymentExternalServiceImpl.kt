@@ -43,7 +43,7 @@ class PaymentExternalSystemAdapterImpl(
         window = Duration.ofMillis(1_000)
     )
 
-    private val client = OkHttpClient.Builder().build()
+    private val httpClient = OkHttpClient.Builder().build()
 
     override fun getAccountProperties(): PaymentAccountProperties {
         return properties
@@ -64,8 +64,7 @@ class PaymentExternalSystemAdapterImpl(
 
         try {
             val parallelLimiterTimeout = calculateRemainingTime(deadline, requestAverageProcessingTime.toMillis())
-            if (parallelLimiterTimeout <= 0 ||
-                !parallelLimiter.tryAcquire(parallelLimiterTimeout, TimeUnit.MILLISECONDS)) {
+            if (parallelLimiterTimeout <= 0 || !parallelLimiter.tryAcquire(parallelLimiterTimeout, TimeUnit.MILLISECONDS)) {
 
                 logger.warn("[$accountName] Parallel limiter timeout for payment $paymentId")
                 paymentESService.update(paymentId) {
@@ -89,21 +88,6 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
                 build()
             }
-
-            val httpTimeout = calculateRemainingTime(deadline, requestAverageProcessingTime.toMillis())
-            if (httpTimeout <= 0) {
-                logger.warn("[$accountName] HTTP request timeout before execution for payment $paymentId")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Request timeout before execution")
-                }
-                return
-            }
-
-            val httpClient = OkHttpClient.Builder()
-                .connectTimeout(httpTimeout, TimeUnit.MILLISECONDS)
-                .readTimeout(httpTimeout, TimeUnit.MILLISECONDS)
-                .writeTimeout(httpTimeout, TimeUnit.MILLISECONDS)
-                .build()
 
             httpClient.newCall(request).execute().use { response ->
                 val body = try {
