@@ -70,7 +70,6 @@ class APIController {
         if (!limiter.tick()) {
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "20")
                 .body(mapOf("error" to "Rate limit exceeded. Try again later."))
         }
 
