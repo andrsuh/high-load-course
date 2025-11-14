@@ -67,7 +67,7 @@ class APIController {
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
 
-        if (!limiter.tick()) {
+        if (!bucketQueueMode.tick()) {
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
                 "Rate limit exceeded. Try again later."
