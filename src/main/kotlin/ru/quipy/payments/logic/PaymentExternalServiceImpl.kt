@@ -56,13 +56,11 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        throwIfTooManyRequests();
+        limiter.tickBlocking()
 
         try {
             semaphore.acquire()
             try {
-
-                throwIfTooManyRequests();
 
                 val request = Request.Builder().run {
                     url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
