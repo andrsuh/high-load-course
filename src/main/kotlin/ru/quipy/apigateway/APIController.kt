@@ -24,7 +24,7 @@ class APIController {
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(11, Duration.ofSeconds(1))
-    private val bucketQueueMode = LeakingBucketRateLimiter(11, Duration.ofSeconds(1), 300)
+    private val bucketQueueMode = LeakingBucketRateLimiter(11, Duration.ofSeconds(1), 280)
 
     @Autowired
     private lateinit var orderPayer: OrderPayer
