@@ -38,8 +38,8 @@ class OrderPayer(
 
     private val paymentExecutor: ThreadPoolExecutor by lazy {
         ThreadPoolExecutor(
-            16,
-            16,
+            accountProperties.parallelRequests,
+            accountProperties.parallelRequests,
             0L,
             TimeUnit.MILLISECONDS,
             ArrayBlockingQueue<Runnable>(8_000),
