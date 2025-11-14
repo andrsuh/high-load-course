@@ -6,14 +6,10 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import org.springframework.web.server.ResponseStatusException
-import ru.quipy.common.utils.CompositeRateLimiter
-import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentAccountProperties
-import java.time.Duration
 import java.time.Instant
 import java.util.*
 
@@ -33,7 +29,7 @@ class APIController(private val properties: PaymentAccountProperties) {
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = rateLimitPerSec.ToLong(),
+        rate = rateLimitPerSec.toLong(),
         window = requestAverageProcessingTime)
 
     @Autowired
