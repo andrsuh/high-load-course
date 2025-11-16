@@ -1,5 +1,6 @@
 package ru.quipy.apigateway
 
+import io.micrometer.prometheusmetrics.PrometheusConfig
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -36,15 +37,12 @@ class APIController {
         return User(UUID.randomUUID(), req.name)
     }
 
-    @Autowired
-    private lateinit var prometheusRegistry: PrometheusMeterRegistry
+    val prometheusRegistry: PrometheusMeterRegistry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
     private val retryCounter = prometheusRegistry.counter(
         "payment.retry.total",
         "service", "cas-m3404-07"
     )
-
-
 
 
     data class CreateUserRequest(val name: String, val password: String)
