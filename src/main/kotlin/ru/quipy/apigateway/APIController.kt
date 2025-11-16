@@ -1,5 +1,6 @@
 package ru.quipy.apigateway
 
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -9,10 +10,10 @@ import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import ru.quipy.payments.logic.PaymentAccountProperties
 import java.time.Duration
 import java.time.Instant
 import java.util.*
+
 
 @RestController
 class APIController {
@@ -34,6 +35,17 @@ class APIController {
     fun createUser(@RequestBody req: CreateUserRequest): User {
         return User(UUID.randomUUID(), req.name)
     }
+
+    @Autowired
+    private lateinit var prometheusRegistry: PrometheusMeterRegistry
+
+    private val retryCounter = prometheusRegistry.counter(
+        "payment.retry.total",
+        "service", "cas-m3404-07"
+    )
+
+
+
 
     data class CreateUserRequest(val name: String, val password: String)
 
@@ -68,6 +80,18 @@ class APIController {
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
 
+        val paymentId = UUID.randomUUID()
+        val order = orderRepository.findById(orderId)?.let {
+            orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
+            it
+        } ?: throw IllegalArgumentException("No such order $orderId")
+
+        val isRetry = order.status != OrderStatus.COLLECTING
+
+        if (isRetry) {
+            retryCounter.increment()
+        }
+
         val now = Instant.now().toEpochMilli()
         val averageProcessingTime = 1200
 
@@ -83,12 +107,6 @@ class APIController {
                 .body(mapOf("error" to "Rate limit exceeded. Try again later."))
         }
 
-
-        val paymentId = UUID.randomUUID()
-        val order = orderRepository.findById(orderId)?.let {
-            orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
-            it
-        } ?: throw IllegalArgumentException("No such order $orderId")
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
 
