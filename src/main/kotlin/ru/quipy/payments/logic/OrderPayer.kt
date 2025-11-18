@@ -34,8 +34,8 @@ class OrderPayer {
     private lateinit var paymentService: PaymentService
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        50,
+        50,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(8000),
@@ -43,7 +43,14 @@ class OrderPayer {
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val rateLimiter = SlidingWindowRateLimiter(8, Duration.ofSeconds(1))
+    private val rateLimitPerSec = 120
+    private val processingTimeSec = 20
+
+    private val rateLimiter = LeakingBucketRateLimiter(
+        rateLimitPerSec.toLong(),
+        Duration.ofSeconds(1),
+        rateLimitPerSec * (processingTimeSec - 1)
+    )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val toBlock = deadline - System.currentTimeMillis()
@@ -51,7 +58,7 @@ class OrderPayer {
             throw TooManyRequestsError(1000)
         }
 
-        if (!rateLimiter.tickBlocking(Duration.ofMillis(toBlock))) {
+        if (!rateLimiter.tick()) {
             throw TooManyRequestsError(1000)
         }
 
