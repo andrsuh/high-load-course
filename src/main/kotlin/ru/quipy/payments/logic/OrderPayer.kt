@@ -43,17 +43,15 @@ class OrderPayer {
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val rateLimitPerSec = 120
-    private val processingTimeSec = 20
+    private val rateLimitPerSec = 120L
+    private val processingTimeSec = 2L
 
-    private val rateLimiter = LeakingBucketRateLimiter(
-        rateLimitPerSec.toLong(),
-        Duration.ofSeconds(1),
-        rateLimitPerSec * (processingTimeSec - 1)
-    )
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec, Duration.ofSeconds(processingTimeSec))
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+
         val toBlock = deadline - System.currentTimeMillis()
+
         if (toBlock <= 0) {
             throw TooManyRequestsError(1000)
         }
