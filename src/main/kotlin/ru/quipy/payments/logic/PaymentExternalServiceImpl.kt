@@ -61,7 +61,9 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     private fun waitRateLimitOrTimeout(deadline: Long): Boolean {
-        // Минимальный шаг сна – примерно "обратная" частота лимита
+
+        // минимальный шаг сна – примерно "обратная" частота лимита
+
         val minSleepMillis = (1000L / rateLimitPerSec.coerceAtLeast(1))
 
         while (true) {
