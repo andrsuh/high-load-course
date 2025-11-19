@@ -44,7 +44,7 @@ class PaymentExternalSystemAdapterImpl(
     private val maxDelay = 1000L
     private val startDelay = 200L
 
-    private fun exponentialBackoffDelay(attempt: Int): Long {
+    private fun calculateBackOff(attempt: Int): Long {
 
         if (attempt <= 0) {
             return startDelay;
@@ -65,9 +65,9 @@ class PaymentExternalSystemAdapterImpl(
         return delay;
     }
 
-    private fun waitRateLimitOrTimeout(deadline: Long): Boolean {
+    private fun timeOutOrGetAccessByRateLimiter(deadline: Long): Boolean {
 
-        val minSleepMillis = (1000L / rateLimitPerSec.coerceAtLeast(1));
+        val minSleepMillis = (1000L / rateLimitPerSec.coerceAtLeast(1)); // один квант времени между запросами ~~ 1 / rateLimitPerSec сек
 
         while (true) {
 
@@ -106,7 +106,7 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquire();
 
-        if (!waitRateLimitOrTimeout(deadline)) {
+        if (!timeOutOrGetAccessByRateLimiter(deadline)) {
 
             logger.error("[$accountName] Rate limit wait exceeded deadline for txId: $transactionId, payment: $paymentId");
 
@@ -151,7 +151,7 @@ class PaymentExternalSystemAdapterImpl(
                             break;
                         }
 
-                        Thread.sleep(exponentialBackoffDelay(amountOfRetries));
+                        Thread.sleep(calculateBackOff(amountOfRetries));
                     }
                 }
 
@@ -160,7 +160,7 @@ class PaymentExternalSystemAdapterImpl(
                     logger.warn("[$accountName] Request interrupted by client timeout for txId=$transactionId (attempt $amountOfRetries/$maxRetryCount)")
 
                     if (amountOfRetries < maxRetryCount && now() < deadline) {
-                        Thread.sleep(exponentialBackoffDelay(amountOfRetries))
+                        Thread.sleep(calculateBackOff(amountOfRetries))
                         continue
                     }
                     else {
