@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 class SlidingWindowRateLimiter(
     private val rate: Long,
-    private val window: Duration,
+    private val window: Duration = Duration.ofSeconds(1),
 ) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 

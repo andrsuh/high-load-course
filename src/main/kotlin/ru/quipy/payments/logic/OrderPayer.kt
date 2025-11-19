@@ -2,6 +2,7 @@ package ru.quipy.payments.logic
 
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import org.slf4j.Logger
@@ -29,24 +30,11 @@ class OrderPayer(registry: MeterRegistry) {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
-        0L,
-        TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(290),
-        NamedThreadFactory("payment-submission-executor")
-    )
-    val executorScope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
-
-    private val paymentExecutorQueueSize =
-        registry.gauge("payment_executor_queue_size", paymentExecutor.queue) {
-            it.size.toDouble()
-        }
+    private val executorScope = CoroutineScope(Dispatchers.IO)
 
     private val paymentExecutionTimer = registry.timer("payment_executor_task_duration")
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+    suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
         executorScope.launch {
