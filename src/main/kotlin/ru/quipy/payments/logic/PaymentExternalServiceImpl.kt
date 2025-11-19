@@ -94,6 +94,7 @@ class PaymentExternalSystemAdapterImpl(
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
 
         logger.warn("[$accountName] Submitting payment request for payment $paymentId");
+
         val transactionId = UUID.randomUUID();
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
@@ -108,10 +109,10 @@ class PaymentExternalSystemAdapterImpl(
 
         if (!timeOutOrGetAccessByRateLimiter(deadline)) {
 
-            logger.error("[$accountName] Rate limit wait exceeded deadline for txId: $transactionId, payment: $paymentId");
+            logger.error("[$accountName] rate limit wait overwhelmed deadline with transactionId: $transactionId, paymentId: $paymentId");
 
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Rate limit wait exceeded deadline.");
+                it.logProcessing(false, now(), transactionId, reason = "rate limit wait overwhelmed deadline");
             }
 
             return;
@@ -143,6 +144,9 @@ class PaymentExternalSystemAdapterImpl(
 
                         logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
+
+                        // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+                        // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message);
                         }
@@ -157,7 +161,7 @@ class PaymentExternalSystemAdapterImpl(
 
                 catch (e: java.io.InterruptedIOException) {
 
-                    logger.warn("[$accountName] Request interrupted by client timeout for txId=$transactionId (attempt $amountOfRetries/$maxRetryCount)")
+                    logger.warn("[$accountName] request stopped by a client timeout for transactionId=$transactionId (in attempt $amountOfRetries of $maxRetryCount)")
 
                     if (amountOfRetries < maxRetryCount && now() < deadline) {
                         Thread.sleep(calculateBackOff(amountOfRetries))
@@ -167,7 +171,6 @@ class PaymentExternalSystemAdapterImpl(
 
                         // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                         // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Client timeout after $maxRetryCount retries.")
                         }

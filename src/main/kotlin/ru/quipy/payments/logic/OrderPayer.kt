@@ -31,7 +31,7 @@ class OrderPayer {
 
     private val paymentExecutor = ThreadPoolExecutor(
         50,
-        50,
+        50, // пропускная способность одного потока 1/averageProccesingTime = 1/0,5 = 2 , rps = 100 , 100/2 = 50
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(8000),
