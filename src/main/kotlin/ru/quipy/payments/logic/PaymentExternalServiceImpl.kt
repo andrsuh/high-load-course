@@ -40,47 +40,53 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimiter = SlidingWindowRateLimiter(properties.rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val ongoingWindow = OngoingWindow(parallelRequests)
 
-    private val retryCount = 3
+    private val maxRetryCount = 3
     private val maxDelay = 1000L
-    private val baseDelay = 200L
+    private val startDelay = 200L
 
     private fun exponentialBackoffDelay(attempt: Int): Long {
+
         if (attempt <= 0) {
-            return baseDelay
+            return startDelay;
         }
 
-        var factor = 1L
+        var factor = 1;
 
         repeat(attempt - 1) {
-            factor *= 2L
+            factor *= 2;
         }
 
-        val delay = baseDelay * factor
-        return if (delay > maxDelay) maxDelay else delay
+        val delay = startDelay * factor;
 
+        if (delay > maxDelay) {
+            return  maxDelay
+        }
+
+        return delay;
     }
 
     private fun waitRateLimitOrTimeout(deadline: Long): Boolean {
 
-        // минимальный шаг сна – примерно "обратная" частота лимита
-
-        val minSleepMillis = (1000L / rateLimitPerSec.coerceAtLeast(1))
+        val minSleepMillis = (1000L / rateLimitPerSec.coerceAtLeast(1));
 
         while (true) {
-            val nowMillis = now()
+
+            val nowMillis = now();
+
             if (nowMillis >= deadline) {
-                return false
+                return false;
             }
 
             if (rateLimiter.tick()) {
-                return true
+                return true;
             }
 
-            val remaining = deadline - nowMillis
-            val sleepMillis = minOf(minSleepMillis, remaining)
+            val remaining = deadline - nowMillis;
+
+            val sleepMillis = minOf(minSleepMillis, remaining);
 
             if (sleepMillis > 0) {
-                Thread.sleep(sleepMillis)
+                Thread.sleep(sleepMillis);
             }
         }
     }
@@ -116,7 +122,7 @@ class PaymentExternalSystemAdapterImpl(
 
             val toBlock = deadline - System.currentTimeMillis()
 
-            while (toBlock >=0 && amountOfRetries < retryCount) {
+            while (toBlock >=0 && amountOfRetries < maxRetryCount) {
                 try {
                     ++amountOfRetries;
 
@@ -141,7 +147,7 @@ class PaymentExternalSystemAdapterImpl(
                             it.logProcessing(body.result, now(), transactionId, reason = body.message);
                         }
 
-                        if (body.result || (amountOfRetries == retryCount)) {
+                        if (body.result || (amountOfRetries == maxRetryCount)) {
                             break;
                         }
 
@@ -151,9 +157,9 @@ class PaymentExternalSystemAdapterImpl(
 
                 catch (e: java.io.InterruptedIOException) {
 
-                    logger.warn("[$accountName] Request interrupted by client timeout for txId=$transactionId (attempt $amountOfRetries/$retryCount)")
+                    logger.warn("[$accountName] Request interrupted by client timeout for txId=$transactionId (attempt $amountOfRetries/$maxRetryCount)")
 
-                    if (amountOfRetries < retryCount && now() < deadline) {
+                    if (amountOfRetries < maxRetryCount && now() < deadline) {
                         Thread.sleep(exponentialBackoffDelay(amountOfRetries))
                         continue
                     }
@@ -163,7 +169,7 @@ class PaymentExternalSystemAdapterImpl(
                         // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
 
                         paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Client timeout after $retryCount retries.")
+                            it.logProcessing(false, now(), transactionId, reason = "Client timeout after $maxRetryCount retries.")
                         }
                     }
                 }
