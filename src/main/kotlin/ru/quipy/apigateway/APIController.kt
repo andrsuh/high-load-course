@@ -1,8 +1,6 @@
 package ru.quipy.apigateway
 
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.prometheusmetrics.PrometheusConfig
-import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -43,14 +41,14 @@ class APIController {
 
     private val retryCounter by lazy {
         meterRegistry.counter(
-            "payment_retry_total",
+            "payment_retry",
             "service", "cas-m3404-07"
         )
     }
 
     private val simpleCounter by lazy {
         meterRegistry.counter(
-            "test_counter_is",
+            "pay_order_requests",
             "service", "cas-m3404-07"
         )
     }
@@ -84,23 +82,25 @@ class APIController {
         PAYMENT_IN_PROGRESS,
         PAID,
     }
-
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
+    fun payOrder(
+        @PathVariable orderId: UUID,
+        @RequestParam deadline: Long
+    ): ResponseEntity<Any> {
 
         val paymentId = UUID.randomUUID()
-        val order = orderRepository.findById(orderId)?.let {
-            orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
-            it
-        } ?: throw IllegalArgumentException("No such order $orderId")
+
+        val order = orderRepository.findById(orderId)
+            ?: throw IllegalArgumentException("No such order $orderId")
 
         val isRetry = order.status != OrderStatus.COLLECTING
-
         if (isRetry) {
             retryCounter.increment()
         }
 
         simpleCounter.increment()
+
+        orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
 
         val now = Instant.now().toEpochMilli()
         val averageProcessingTime = 1200
@@ -117,11 +117,11 @@ class APIController {
                 .body(mapOf("error" to "Rate limit exceeded. Try again later."))
         }
 
-
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
 
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
+
 
 
     class PaymentSubmissionDto(
