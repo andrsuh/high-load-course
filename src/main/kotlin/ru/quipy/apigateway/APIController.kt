@@ -46,6 +46,12 @@ class APIController {
         "service", "cas-m3404-07"
     )
 
+    private val simpleCounter = meterRegistry.counter(
+        "test_nothing",
+        "service", "cas-m3404-07"
+    )
+
+
     data class CreateUserRequest(val name: String, val password: String)
 
     data class User(val id: UUID, val name: String)
@@ -90,6 +96,8 @@ class APIController {
         if (isRetry) {
             retryCounter.increment()
         }
+
+        simpleCounter.increment()
 
         val now = Instant.now().toEpochMilli()
         val averageProcessingTime = 1200
