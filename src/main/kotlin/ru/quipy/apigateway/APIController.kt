@@ -40,7 +40,7 @@ class APIController {
     val prometheusRegistry: PrometheusMeterRegistry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
     private val retryCounter = prometheusRegistry.counter(
-        "payment.retry.total",
+        "payment_retry_total",
         "service", "cas-m3404-07"
     )
 
