@@ -25,7 +25,7 @@ class APIController {
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = 8,
+        rate = 10,
         window = Duration.ofMillis(1200))
 
     @Autowired
@@ -49,6 +49,13 @@ class APIController {
     private val simpleCounter by lazy {
         meterRegistry.counter(
             "pay_order_requests",
+            "service", "cas-m3404-07"
+        )
+    }
+
+    private val sendRetryCounter by lazy {
+        meterRegistry.counter(
+            "create_order_429_sent",
             "service", "cas-m3404-07"
         )
     }
@@ -104,11 +111,13 @@ class APIController {
         val averageProcessingTime = 1200
 
         if (!limiter.tick()) {
-            if (deadline < now + averageProcessingTime) {
+            if (deadline < now) {
                 return ResponseEntity
                     .status(HttpStatus.GONE)
                     .body(mapOf("error" to "Deadline will expire before processing"))
             }
+
+            sendRetryCounter.increment()
 
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)

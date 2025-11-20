@@ -2,12 +2,13 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.MeterRegistry
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
 import org.springframework.web.server.ResponseStatusException
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
@@ -23,6 +24,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    private val meterRegistry: MeterRegistry
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -45,6 +47,13 @@ class PaymentExternalSystemAdapterImpl(
         window = requestAverageProcessingTime
     )
 
+    private val retryCounter by lazy {
+        meterRegistry.counter(
+            "perform_payment_429_sent",
+            "service", "cas-m3404-07"
+        )
+    }
+
     private val semaphore = Semaphore(parallelRequests, true)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -61,13 +70,15 @@ class PaymentExternalSystemAdapterImpl(
         val now = Instant.now().toEpochMilli()
 
         if (!limiter.tick()) {
-            if (deadline < now + requestAverageProcessingTime.toMillis()) {
+            if (deadline < now) {
                 throw ResponseStatusException(
                     HttpStatus.GONE,
                     "Deadline expired before request could be processed"
                 )
 
             }
+
+            retryCounter.increment()
 
             throw ResponseStatusException(
                 HttpStatus.TOO_MANY_REQUESTS,
