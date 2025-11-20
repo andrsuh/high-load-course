@@ -50,7 +50,7 @@ class APIController {
 
     private val simpleCounter by lazy {
         meterRegistry.counter(
-            "payment_retry_total",
+            "test_counter_is",
             "service", "cas-m3404-07"
         )
     }
