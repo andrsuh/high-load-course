@@ -41,11 +41,10 @@ class APIController {
     @Autowired
     lateinit var meterRegistry: MeterRegistry
 
-    private val retryCounter by lazy {
-        meterRegistry.counter("payment_retry_total", "service", "cas-m3404-07")
-    }
-
-
+    private val retryCounter = meterRegistry.counter(
+        "payment_retry_total",
+        "service", "cas-m3404-07"
+    )
 
     data class CreateUserRequest(val name: String, val password: String)
 
