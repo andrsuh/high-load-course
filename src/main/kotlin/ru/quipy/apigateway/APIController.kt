@@ -100,8 +100,6 @@ class APIController {
 
         simpleCounter.increment()
 
-        orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
-
         val now = Instant.now().toEpochMilli()
         val averageProcessingTime = 1200
 
@@ -117,11 +115,12 @@ class APIController {
                 .body(mapOf("error" to "Rate limit exceeded. Try again later."))
         }
 
+        orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
+
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
 
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
-
 
 
     class PaymentSubmissionDto(
