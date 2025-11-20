@@ -31,6 +31,7 @@ class OrderPayer(
         private const val CORE_POOL_SIZE = (1 * PARALLEL_HTTP).toInt()
         private const val MAX_WAIT_MS = 200L
         private const val RATE_PER_SEC_LIMIT = 100
+        private const val QUEUE_CAPACITY = 100
     }
 
     @Autowired
@@ -43,7 +44,7 @@ class OrderPayer(
         CORE_POOL_SIZE,
         PARALLEL_HTTP,
         0L, TimeUnit.MILLISECONDS,
-        SynchronousQueue<Runnable>(),
+        LinkedBlockingQueue<Runnable>(QUEUE_CAPACITY),
         NamedThreadFactory("payment-http-executor"),
         CallerBlockingRejectedExecutionHandler(Duration.ofMillis(MAX_WAIT_MS))
     ).apply { prestartAllCoreThreads() }
@@ -68,6 +69,13 @@ class OrderPayer(
     @Suppress("unused")
     private val poolCompletedGauge = Gauge.builder("payment.pool.completed") { paymentExecutor.completedTaskCount.toDouble() }
         .description("Сколько задач выполнено пулом")
+        .register(meterRegistry)
+
+    @Suppress("unused")
+    private val queueSizeGauge = Gauge.builder("payment.pool.queue.size") {
+        paymentExecutor.queue.size.toDouble()
+    }
+        .description("Размер очереди задач paymentExecutor")
         .register(meterRegistry)
 
     private val acceptedRequestsCounter: Counter = Counter
@@ -96,10 +104,6 @@ class OrderPayer(
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-        if (!slidingWindowLimiter.tick()) {
-            reject("rate_limit", 1000)
-        }
-
         try {
             paymentExecutor.execute {
                 val createdEvent = paymentESService.create {
@@ -109,6 +113,16 @@ class OrderPayer(
                         amount
                     )
                 }
+
+                val gotSlot = slidingWindowLimiter.tickBlocking(Duration.ofMillis(MAX_WAIT_MS))
+                if (!gotSlot) {
+                    Counter.builder("incoming.payments.rejected")
+                        .tag("reason", "rate_limit")
+                        .register(meterRegistry)
+                        .increment()
+                    return@execute
+                }
+
                 logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
                 val paymentTime = measureTime {
                     paymentService.submitPaymentRequest(
