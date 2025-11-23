@@ -9,16 +9,16 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.TokenBucketRateLimiter
-
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import ru.quipy.payments.logic.TooManyException
 import java.util.*
 import java.util.concurrent.TimeUnit
 
+
 @RestController
 class APIController(
-    @Autowired
-    var registry: MeterRegistry
+    @Autowired var registry: MeterRegistry
 ) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
@@ -29,12 +29,7 @@ class APIController(
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    //Для третьего теста  private var rateLimiter = TokenBucketRateLimiter(11, 284, 1, TimeUnit.SECONDS)
-    /*Мы обратили внимание на график Amount of queries, и также прочитали конфигурации аккаунта, максимальная пропускная способность это 11 rps (rateLimitPerSec=11),
-     поэтому мы ограничили rate до 11.
-     Так как у нас bucketMaxCapacity = rate, то поведение становится строго равномерным , то есть лимитер выдаёт запросы максимально стабильно, без резких всплесков. */
-    private var rateLimiter = TokenBucketRateLimiter(110, 110, 1, TimeUnit.SECONDS)
-    /*Для третьего кейса processingTimeMillis = 26000, bucketMaxCapacity = 11 req/s * 26 s = 286 допустимых запросов - взяли чуть поменьше 284.*/
+    private var rateLimiter = TokenBucketRateLimiter(1100, 1100, 1, TimeUnit.SECONDS)
     private val counter = Counter.builder("queries.amount").tag("name", "orders").register(registry)
     private val counterPayment = Counter.builder("queries.amount").tag("name", "payment").register(registry)
 
@@ -44,7 +39,6 @@ class APIController(
     }
 
     data class CreateUserRequest(val name: String, val password: String)
-
     data class User(val id: UUID, val name: String)
 
     @PostMapping("/orders")
@@ -57,8 +51,7 @@ class APIController(
             OrderStatus.COLLECTING,
             price,
         )
-        var save = orderRepository.save(order)
-        return save
+        return orderRepository.save(order)
     }
 
     data class Order(
@@ -70,36 +63,40 @@ class APIController(
     )
 
     enum class OrderStatus {
-        COLLECTING,
-        PAYMENT_IN_PROGRESS,
-        PAID,
+        COLLECTING, PAYMENT_IN_PROGRESS, PAID,
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
+    fun payOrder(
+        @PathVariable orderId: UUID,
+        @RequestParam deadline: Long
+    ): ResponseEntity<PaymentSubmissionDto> {
         val paymentId = UUID.randomUUID()
+        val timestamp = System.currentTimeMillis() + 700
 
-        // Для третьего теста меняем на 700
-        /* Используем timestamp, чтобы определить, через сколько миллисекунд нужно повторить запрос.
-Если поставить слишком большое значение: клиент ждёт дольше, чем реально нужно, не укладываемся по времени в 6 минут, поэтому сокращаем до 700 */
-        val timestamp = System.currentTimeMillis() + 950
-        /*По тесту токены добавляются каждую секунду (1000 мс). Установка Retry-After = 950 мс позволяет начать повторные попытки чуть раньше, чем появится новый токен. Сделано для снижения риска накопления очереди запросов.*/
+        // Rate limiter
         if (!rateLimiter.tick()) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", timestamp.toString())
                 .build()
         }
 
-
+        // Находим заказ
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
         counterPayment.increment()
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
 
-        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        return try {
+            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+            ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        } catch (e: TooManyException) {
+            ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", e.retryAfterMillis.toString())
+                .build()
+        }
     }
 
     class PaymentSubmissionDto(
