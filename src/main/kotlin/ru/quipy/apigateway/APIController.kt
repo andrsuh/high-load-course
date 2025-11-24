@@ -25,7 +25,7 @@ class APIController {
 
     //case 1: private val paymentRateLimiter = TokenBucketRateLimiter(11, 13, 1, TimeUnit.SECONDS)
     //case 2: private val paymentRateLimiter = TokenBucketRateLimiter(11, 132, 1, TimeUnit.SECONDS)
-    private val paymentRateLimiter = TokenBucketRateLimiter(11, 270, 1, TimeUnit.SECONDS)
+    private val paymentRateLimiter = TokenBucketRateLimiter(10, 270, 1, TimeUnit.SECONDS)
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
