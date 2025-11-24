@@ -1,17 +1,35 @@
 package ru.quipy.apigateway
 
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
+import io.prometheus.metrics.core.metrics.SlidingWindow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import java.time.Duration
 import java.util.*
 
 @RestController
-class APIController {
+class APIController(@Autowired meterRegistry: MeterRegistry) {
 
+    private val rateLimitPerSec = 8
+    private val processingTimeSec = 6
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
+    private val rateLimiter = LeakingBucketRateLimiter(
+        rateLimitPerSec.toLong(),
+        Duration.ofSeconds(1),
+        rateLimitPerSec * (processingTimeSec - 1)
+    )
+
+    private val orderCounter: Counter = Counter.builder("http_requests_served")
+        .description("Count of requests served for payment")
+        .register(meterRegistry)
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
@@ -30,6 +48,7 @@ class APIController {
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+        orderCounter.increment()
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -55,7 +74,11 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long):  ResponseEntity<PaymentSubmissionDto> {
+        orderCounter.increment()
+        if (!rateLimiter.tick()) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build()
+        }
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
@@ -64,7 +87,7 @@ class APIController {
 
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        return PaymentSubmissionDto(createdAt, paymentId)
+        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
 
     class PaymentSubmissionDto(
