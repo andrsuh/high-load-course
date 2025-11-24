@@ -66,7 +66,6 @@ class APIController {
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
         if (!paymentRateLimiter.tick()) {
             logger.warn("Rate limit exceeded for payment request, orderId: $orderId")
-            val retryAfterMs = System.currentTimeMillis() + 700
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", "2")
