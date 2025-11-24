@@ -26,6 +26,8 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    // Ingress rate limiter removed: rely on provider-side limiter to ensure 11 rps utilization
+
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -37,19 +39,20 @@ class OrderPayer {
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+        // No ingress throttling: allow submission; provider adapter enforces true rate limit
+
         val createdAt = System.currentTimeMillis()
-        paymentExecutor.submit {
+        val future = paymentExecutor.submit {
             val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
+                it.create(paymentId, orderId, amount)
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
+
+        future.get() // Or future.get(timeout, TimeUnit.MILLISECONDS)
+
         return createdAt
     }
 }
