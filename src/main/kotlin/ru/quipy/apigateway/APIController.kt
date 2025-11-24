@@ -25,7 +25,7 @@ class APIController {
 
     //case 1: private val paymentRateLimiter = TokenBucketRateLimiter(11, 13, 1, TimeUnit.SECONDS)
     //case 2: private val paymentRateLimiter = TokenBucketRateLimiter(11, 132, 1, TimeUnit.SECONDS)
-    private val paymentRateLimiter = TokenBucketRateLimiter(11, 275, 1, TimeUnit.SECONDS)
+    private val paymentRateLimiter = TokenBucketRateLimiter(11, 270, 1, TimeUnit.SECONDS)
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
@@ -69,7 +69,7 @@ class APIController {
             val retryAfterMs = System.currentTimeMillis() + 700
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", retryAfterMs.toString())
+                .header("Retry-After", "2")
                 .body(mapOf("error" to "Rate limit exceeded"))
         }
 
