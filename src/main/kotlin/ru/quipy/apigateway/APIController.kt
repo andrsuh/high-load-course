@@ -6,10 +6,11 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import ru.quipy.common.utils.SlidingWindowQueueRateLimiter
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 @RestController
 class APIController {
@@ -22,7 +23,7 @@ class APIController {
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    private val paymentRateLimiter = SlidingWindowQueueRateLimiter(330)
+    private val paymentRateLimiter = TokenBucketRateLimiter(11, 13, 1, TimeUnit.SECONDS)
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
@@ -61,11 +62,11 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<Any> {
-        if (!paymentRateLimiter.allowRequest()) {
+        if (!paymentRateLimiter.tick()) {
             logger.warn("Rate limit exceeded for payment request, orderId: $orderId")
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "1")
+                .header("Retry-After", "2")
                 .body(mapOf("error" to "Rate limit exceeded"))
         }
 
