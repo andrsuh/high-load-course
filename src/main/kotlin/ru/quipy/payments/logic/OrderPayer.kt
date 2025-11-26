@@ -26,12 +26,12 @@ class OrderPayer(
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
 
-        private const val PARALLEL_HTTP = 50
+        private const val PARALLEL_HTTP = 500
 
         private const val CORE_POOL_SIZE = (1 * PARALLEL_HTTP).toInt()
-        private const val MAX_WAIT_MS = 200L
-        private const val RATE_PER_SEC_LIMIT = 100
-        private const val QUEUE_CAPACITY = 100
+        private const val MAX_WAIT_MS = 30000L
+        private const val RATE_PER_SEC_LIMIT = 2000
+        private const val QUEUE_CAPACITY = 500000
     }
 
     @Autowired
