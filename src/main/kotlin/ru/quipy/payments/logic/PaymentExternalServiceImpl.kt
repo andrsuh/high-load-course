@@ -140,38 +140,12 @@ class PaymentExternalSystemAdapterImpl(
                         return
                     }
                 } catch (e: Exception) {
-                    when (e) {
-                        is SocketTimeoutException -> {
-                            if (attempt < maxRetries - 1) {
-                                if (System.currentTimeMillis() + sleepTime > deadline) {
-                                    logger.warn("[$accountName] Payment $paymentId timeout, no time for retry")
-                                    paymentESService.update(paymentId) {
-                                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                                    }
-                                    return
-                                }
-                                attempt++
-                                logger.warn("[$accountName] Payment $paymentId timeout, retry $attempt/$maxRetries, sleep ${sleepTime}ms")
-                                Thread.sleep(sleepTime)
-                                sleepTime += 1000L
-                            } else {
-                                logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                                paymentESService.update(paymentId) {
-                                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                                }
-                                return
-                            }
-                        }
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
-                        else -> {
-                            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(false, now(), transactionId, reason = e.message)
-                            }
-                            return
-                        }
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = e.message)
                     }
+                    return
                 }
             }
             
