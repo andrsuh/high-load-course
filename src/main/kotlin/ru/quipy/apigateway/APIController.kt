@@ -6,9 +6,11 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
 
@@ -23,9 +25,7 @@ class APIController {
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    //case 1: private val paymentRateLimiter = TokenBucketRateLimiter(11, 13, 1, TimeUnit.SECONDS)
-    //case 2: private val paymentRateLimiter = TokenBucketRateLimiter(11, 132, 1, TimeUnit.SECONDS)
-    private val paymentRateLimiter = TokenBucketRateLimiter(10, 270, 1, TimeUnit.SECONDS)
+    private val paymentRateLimiter = LeakingBucketRateLimiter(10, Duration.ofSeconds(1), 270)
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
