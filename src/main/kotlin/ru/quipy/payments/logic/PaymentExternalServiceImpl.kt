@@ -4,17 +4,19 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Metrics
+import io.micrometer.core.instrument.Timer
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.common.utils.OngoingWindow
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.net.SocketTimeoutException
+import java.io.InterruptedIOException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -38,7 +40,9 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient.Builder()
+        .callTimeout(2000, TimeUnit.MILLISECONDS)
+        .build()
 
     private val rateLimiter = SlidingWindowRateLimiter(
         rate = rateLimitPerSec.toLong(),
@@ -66,6 +70,9 @@ class PaymentExternalSystemAdapterImpl(
         incomingRequestsCounter.increment()
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
         ongoingWindow.acquire()
+
+        val sample = Timer.start()
+
         try {
             val transactionId = UUID.randomUUID()
 
@@ -139,6 +146,12 @@ class PaymentExternalSystemAdapterImpl(
                         }
                         return
                     }
+                } catch (e: InterruptedIOException) {
+                    logger.warn("[$accountName] Timeout/interrupted during payment $paymentId, will retry if attempts left", e)
+                    attempt++
+                    Thread.sleep(sleepTime)
+                    sleepTime += 1000L
+                    continue
                 } catch (e: Exception) {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
@@ -154,6 +167,12 @@ class PaymentExternalSystemAdapterImpl(
                 it.logProcessing(false, now(), transactionId, reason = "Failed after retries")
             }
         } finally {
+            sample.stop(Metrics.timer(
+                "payment_duration_seconds",
+                "service", serviceName,
+                "account", accountName
+            ))
+
             completedRequestsCounter.increment()
             ongoingWindow.release()
         }
