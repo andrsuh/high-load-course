@@ -90,7 +90,6 @@ class PaymentExternalSystemAdapterImpl(
 
                 val nowMs = Instant.now().toEpochMilli()
 
-
                 // тут выбиораем либо 5 сек либо остаток от дедлайна
                 val timeoutMs = (deadline - nowMs).coerceAtMost(5000)
                 if (timeoutMs <= 0) {
