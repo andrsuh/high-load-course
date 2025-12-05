@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.exceptions.TooManyRequestsException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.time.Instant
@@ -70,7 +71,7 @@ class PaymentExternalSystemAdapterImpl(
         val now = Instant.now().toEpochMilli()
 
         if (!limiter.tick()) {
-            if (deadline < now) {
+            if (deadline < now + requestAverageProcessingTime.toMillis()) {
                 throw ResponseStatusException(
                     HttpStatus.GONE,
                     "Deadline expired before request could be processed"
@@ -80,8 +81,8 @@ class PaymentExternalSystemAdapterImpl(
 
             retryCounter.increment()
 
-            throw ResponseStatusException(
-                HttpStatus.TOO_MANY_REQUESTS,
+            throw TooManyRequestsException(
+                20,
                 "Rate limit exceeded. Try again later."
             )
         }

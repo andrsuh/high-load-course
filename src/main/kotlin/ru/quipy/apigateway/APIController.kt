@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
+import ru.quipy.payments.exceptions.TooManyRequestsException
 import ru.quipy.payments.logic.OrderPayer
 import java.time.Duration
 import java.time.Instant
@@ -111,7 +112,7 @@ class APIController {
         val averageProcessingTime = 1200
 
         if (!limiter.tick()) {
-            if (deadline < now) {
+            if (deadline < now + averageProcessingTime) {
                 return ResponseEntity
                     .status(HttpStatus.GONE)
                     .body(mapOf("error" to "Deadline will expire before processing"))
@@ -119,9 +120,10 @@ class APIController {
 
             sendRetryCounter.increment()
 
-            return ResponseEntity
-                .status(HttpStatus.TOO_MANY_REQUESTS)
-                .body(mapOf("error" to "Rate limit exceeded. Try again later."))
+            throw TooManyRequestsException(
+                20,
+                "Rate limit exceeded. Try again later."
+            )
         }
 
         orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
