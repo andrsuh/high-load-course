@@ -164,7 +164,6 @@ class PaymentExternalSystemAdapterImpl(
 
             activeRequestsCount.incrementAndGet()
             try {
-                // Проверка deadline
                 if (now() >= deadline) {
                     metrics.incrementTimeout(accountName, "deadline_expired_in_request")
                     metrics.incrementFailure(accountName, "deadline_expired")
@@ -225,8 +224,12 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
-    override fun getOptimalThreads(): Int = parallelRequests
+    override fun getOptimalThreads(): Int {
+        val calculated = (rateLimitPerSec * requestAverageProcessingTime.toMillis() / 1000.0).toInt()
+        logger.info("[$accountName] Calculated optimal threads: $calculated (rate=$rateLimitPerSec, avgTime=${requestAverageProcessingTime.toMillis()}ms)")
+        return maxOf(calculated, parallelRequests)
+    }
 
-    override fun getQueueSize(): Int = 0 // Bulkhead управляет очередью
+    override fun getQueueSize(): Int = 0
 
 }
