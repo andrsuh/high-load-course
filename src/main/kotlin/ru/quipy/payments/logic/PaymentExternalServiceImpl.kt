@@ -74,7 +74,7 @@ class PaymentExternalSystemAdapterImpl(
 
             logger.info("Условие из сервиса: [deadline: $deadline, averageProcessingTime: $requestAverageProcessingTime.toMillis(), now: $now]")
 
-            if (deadline < now + requestAverageProcessingTime.toMillis()) {
+            if (deadline + requestAverageProcessingTime.toMillis() < now) {
 
                 logger.info("Условие в сервисе: [deadline < now + averageProcessingTime] сработало. Выбрасываем ошибку GONE")
 

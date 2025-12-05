@@ -111,11 +111,13 @@ class APIController {
         val now = Instant.now().toEpochMilli()
         val averageProcessingTime = 1200
 
+        // 10
+
         if (!limiter.tick()) {
 
             logger.info("Условие: [deadline: $deadline, averageProcessingTime: $averageProcessingTime, now: $now]")
 
-            if (deadline < now + averageProcessingTime) {
+            if (deadline + averageProcessingTime < now) {
 
                 logger.info("Условие: [deadline < now + averageProcessingTime] сработало. Выбрасываем ошибку GONE")
 
