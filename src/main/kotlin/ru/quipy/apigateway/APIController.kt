@@ -126,7 +126,7 @@ class APIController {
 
             sendRetryCounter.increment()
 
-            logger.info("Условие: [deadline < now + averageProcessingTime] сработало. Выбрасываем ошибку TOO MANY REQUESTS")
+            logger.info("Условие: [deadline < now + averageProcessingTime] НЕ СРАБОТАЛО. Выбрасываем ошибку TOO MANY REQUESTS")
 
             throw TooManyRequestsException(
                 20,

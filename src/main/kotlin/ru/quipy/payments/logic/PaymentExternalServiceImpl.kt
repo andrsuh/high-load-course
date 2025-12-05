@@ -88,7 +88,7 @@ class PaymentExternalSystemAdapterImpl(
 
             retryCounter.increment()
 
-            logger.info("Условие в сервисе: [deadline < now + averageProcessingTime] сработало. Выбрасываем ошибку TOO MANY REQUESTS")
+            logger.info("Условие в сервисе: [deadline < now + averageProcessingTime] НЕ СРАБОТАЛО. Выбрасываем ошибку TOO MANY REQUESTS")
 
             throw TooManyRequestsException(
                 20,
