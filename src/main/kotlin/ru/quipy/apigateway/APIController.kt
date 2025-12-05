@@ -112,6 +112,9 @@ class APIController {
         val averageProcessingTime = 1200
 
         if (!limiter.tick()) {
+
+            logger.info("Условие: [deadline: $deadline, averageProcessingTime: $averageProcessingTime, now: $now]")
+
             if (deadline < now + averageProcessingTime) {
                 return ResponseEntity
                     .status(HttpStatus.GONE)

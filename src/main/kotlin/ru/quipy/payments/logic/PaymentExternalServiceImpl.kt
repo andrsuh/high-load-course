@@ -71,6 +71,9 @@ class PaymentExternalSystemAdapterImpl(
         val now = Instant.now().toEpochMilli()
 
         if (!limiter.tick()) {
+
+            logger.info("Условие из сервиса: [deadline: $deadline, averageProcessingTime: $requestAverageProcessingTime.toMillis(), now: $now]")
+
             if (deadline < now + requestAverageProcessingTime.toMillis()) {
                 throw ResponseStatusException(
                     HttpStatus.GONE,
