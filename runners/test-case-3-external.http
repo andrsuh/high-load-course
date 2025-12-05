@@ -1,4 +1,4 @@
-### Run test remotely
+### Run test remotely (КЕЙС 3: acc-5)
 # @timeout 120
 POST http://77.234.215.138:34321/run
 Content-Type: application/json
@@ -6,14 +6,14 @@ Content-Type: application/json
 {
   "serviceName": "{{serviceName}}",
   "token": "{{token}}",
-  "branch": "case-4",
-  "accounts": "acc-23",
-  "ratePerSecond": 16,
-  "testCount": 1600,
-  "processingTimeMillis": 30000,
+  "branch": "case-3",
+  "accounts": "acc-5",
+  "ratePerSecond": 2,
+  "testCount": 500,
+  "processingTimeMillis": 60000,
   "onPremises": true
 }
 
 ### Stop running test to save credits
 # @timeout 120
-POST http://77.234.215.138:31234/test/stop/{{serviceName}}
+POST http://77.234.215.138:31234/test/stop/"{{serviceName}}"
