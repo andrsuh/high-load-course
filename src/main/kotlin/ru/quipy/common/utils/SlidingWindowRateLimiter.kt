@@ -8,7 +8,8 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.Executors
-import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -20,7 +21,7 @@ class SlidingWindowRateLimiter(
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     private val sum = AtomicLong(0)
-    private val queue = PriorityBlockingQueue<Measure>(10_000)
+    private val queue = LinkedBlockingQueue<Measure>()
 
     override fun tick(): Boolean {
         while (true) {
@@ -42,11 +43,7 @@ class SlidingWindowRateLimiter(
     data class Measure(
         val value: Long,
         val timestamp: Long
-    ) : Comparable<Measure> {
-        override fun compareTo(other: Measure): Int {
-            return timestamp.compareTo(other.timestamp)
-        }
-    }
+    )
 
     private val releaseJob = rateLimiterScope.launch {
         while (true) {
@@ -61,7 +58,7 @@ class SlidingWindowRateLimiter(
                 continue
             }
             sum.addAndGet(-1)
-            queue.take()
+            queue.poll()
         }
     }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
     companion object {
