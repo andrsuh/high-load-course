@@ -81,7 +81,7 @@ class PaymentExternalSystemAdapterImpl(
                 logger.info("Условие в сервисе: [deadline < now + averageProcessingTime]  СРАБОТАЛО. Выбрасываем ошибку TOO MANY REQUESTS")
 
                 throw TooManyRequestsException(
-                    100,
+                    500,
                     "Rate limit exceeded. Try again later."
                 )
 
