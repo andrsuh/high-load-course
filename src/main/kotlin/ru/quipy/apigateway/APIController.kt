@@ -26,7 +26,7 @@ class APIController {
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = 10,
+        rate = 5,
         window = Duration.ofMillis(1200))
 
     @Autowired
