@@ -117,23 +117,25 @@ class APIController {
 
             logger.info("Условие: [deadline: $deadline, averageProcessingTime: $averageProcessingTime, now: $now]")
 
-            if (deadline + averageProcessingTime < now) {
+            if (deadline > now + averageProcessingTime + 2000) {
 
-                logger.info("Условие: [deadline < now + averageProcessingTime] сработало. Выбрасываем ошибку GONE")
+                sendRetryCounter.increment()
 
-                return ResponseEntity
-                    .status(HttpStatus.GONE)
-                    .body(mapOf("error" to "Deadline will expire before processing"))
+                logger.info("Условие: [deadline > now + averageProcessingTime] СРАБОТАЛО. Выбрасываем ошибку TOO MANY REQUESTS")
+
+                throw TooManyRequestsException(
+                    2,
+                    "Rate limit exceeded. Try again later."
+                )
+
             }
 
-            sendRetryCounter.increment()
+            logger.info("Условие: [deadline < now + averageProcessingTime] не сработало. Выбрасываем ошибку GONE")
 
-            logger.info("Условие: [deadline < now + averageProcessingTime] НЕ СРАБОТАЛО. Выбрасываем ошибку TOO MANY REQUESTS")
+            return ResponseEntity
+                .status(HttpStatus.GONE)
+                .body(mapOf("error" to "Deadline will expire before processing"))
 
-            throw TooManyRequestsException(
-                2,
-                "Rate limit exceeded. Try again later."
-            )
         }
 
         orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
