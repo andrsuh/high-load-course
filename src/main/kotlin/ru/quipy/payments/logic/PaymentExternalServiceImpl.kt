@@ -9,6 +9,7 @@ import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.server.ResponseStatusException
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
@@ -70,11 +71,21 @@ class PaymentExternalSystemAdapterImpl(
 
         val now = Instant.now().toEpochMilli()
 
+        if (deadline <= now + requestAverageProcessingTime.toMillis()) {
+
+            logger.info("Условие в сервисе и не в лимитере: [deadline < now + averageProcessingTime] не сработало. Выбрасываем ошибку GONE.")
+
+            throw ResponseStatusException(
+                HttpStatus.GONE,
+                "Deadline expired before request could be processed"
+            )
+        }
+
         if (!limiter.tick()) {
 
             logger.info("Условие из сервиса: [deadline: $deadline, averageProcessingTime: $requestAverageProcessingTime.toMillis(), now: $now]")
 
-            if (deadline > now + requestAverageProcessingTime.toMillis() + 2000) {
+            if (deadline > now + requestAverageProcessingTime.toMillis()) {
 
                 retryCounter.increment()
 

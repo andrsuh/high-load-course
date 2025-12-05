@@ -26,7 +26,7 @@ class APIController {
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = 5,
+        rate = 8,
         window = Duration.ofMillis(1200))
 
     @Autowired
@@ -113,11 +113,23 @@ class APIController {
 
         // 10
 
+        logger.info("Условие: [deadline: $deadline, averageProcessingTime: $averageProcessingTime, now: $now]")
+
+        if (deadline <= now + averageProcessingTime) {
+
+            logger.info("Условие не в лимитере: [deadline < now + averageProcessingTime] не сработало. Выбрасываем ошибку GONE")
+
+            return ResponseEntity
+                .status(HttpStatus.GONE)
+                .body(mapOf("error" to "Deadline will expire before processing"))
+
+        }
+
         if (!limiter.tick()) {
 
             logger.info("Условие: [deadline: $deadline, averageProcessingTime: $averageProcessingTime, now: $now]")
 
-            if (deadline > now + averageProcessingTime + 2000) {
+            if (deadline > now + averageProcessingTime) {
 
                 sendRetryCounter.increment()
 
