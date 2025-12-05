@@ -75,6 +75,10 @@ class PaymentExternalSystemAdapterImpl(
             logger.info("Условие из сервиса: [deadline: $deadline, averageProcessingTime: $requestAverageProcessingTime.toMillis(), now: $now]")
 
             if (deadline < now + requestAverageProcessingTime.toMillis()) {
+
+                logger.info("Условие в сервисе: [deadline < now + averageProcessingTime] сработало. Выбрасываем ошибку GONE")
+
+
                 throw ResponseStatusException(
                     HttpStatus.GONE,
                     "Deadline expired before request could be processed"
@@ -83,6 +87,8 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             retryCounter.increment()
+
+            logger.info("Условие в сервисе: [deadline < now + averageProcessingTime] сработало. Выбрасываем ошибку TOO MANY REQUESTS")
 
             throw TooManyRequestsException(
                 20,
