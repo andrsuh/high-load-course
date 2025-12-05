@@ -28,8 +28,8 @@ class APIController {
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = 8,
-        window = Duration.ofMillis(1200))
+        rate = 120,
+        window = Duration.ofMillis(500))
 
     @Autowired
     private lateinit var orderPayer: OrderPayer
