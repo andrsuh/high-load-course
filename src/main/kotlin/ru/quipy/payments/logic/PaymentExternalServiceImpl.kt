@@ -18,6 +18,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.*
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
@@ -90,12 +91,27 @@ class PaymentExternalSystemAdapterImpl(
             semaphore.acquire()
             try {
 
-                val request = Request.Builder().run {
-                    url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-                    post(emptyBody)
-                }.build()
+                val nowMs = Instant.now().toEpochMilli()
 
-                client.newCall(request).execute().use { response ->
+
+                // тут выбиораем либо 5 сек либо остаток от дедлайна
+                val timeoutMs = (deadline - nowMs).coerceAtMost(5000)
+                if (timeoutMs <= 0) {
+                    throw ResponseStatusException(HttpStatus.GONE, "Deadline expired before sending request")
+                }
+
+                val timedClient = client.newBuilder()
+                    .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .writeTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .build()
+
+                val request = Request.Builder()
+                    .url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+                    .post(emptyBody)
+                    .build()
+
+                timedClient.newCall(request).execute().use { response ->
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
@@ -109,6 +125,7 @@ class PaymentExternalSystemAdapterImpl(
                         it.logProcessing(body.result, now(), transactionId, reason = body.message)
                     }
                 }
+
             } catch (e: Exception) {
                 when (e) {
                     is SocketTimeoutException -> {
@@ -131,15 +148,6 @@ class PaymentExternalSystemAdapterImpl(
             semaphore.release()
         }
 
-    }
-
-    fun throwIfTooManyRequests() {
-        if (!limiter.tick()){
-            throw ResponseStatusException(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "Rate limit exceeded. Try again later."
-            )
-        }
     }
 
     override fun price() = properties.price
