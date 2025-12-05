@@ -15,9 +15,7 @@ import ru.quipy.payments.logic.now
 import java.util.UUID
 
 @RestControllerAdvice
-class GlobalExceptionHandler(
-    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
-) {
+class GlobalExceptionHandler {
     companion object {
         val logger = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)
     }
