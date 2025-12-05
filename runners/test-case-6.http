@@ -1,0 +1,17 @@
+### КЕЙС 6: Тест для аккаунта acc-8
+### ⚠️  ВАЖНО: ПЕРЕД ЗАПУСКОМ ТЕСТА ЗАПУСТИТЕ ПРИЛОЖЕНИЕ С АККАУНТОМ acc-8:
+### export PAYMENT_ACCOUNTS=acc-8 && mvn spring-boot:run
+
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 7,
+  "testCount": 800,
+  "processingTimeMillis": 3500
+}
+
+### Stop running test to save time and resources
+POST http://localhost:1234/test/stop/{{serviceName}}
