@@ -124,7 +124,7 @@ class APIController {
                 logger.info("Условие: [deadline > now + averageProcessingTime] СРАБОТАЛО. Выбрасываем ошибку TOO MANY REQUESTS")
 
                 throw TooManyRequestsException(
-                    2,
+                    100,
                     "Rate limit exceeded. Try again later."
                 )
 
