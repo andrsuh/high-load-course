@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.server.ResponseStatusException
+import ru.quipy.common.utils.DeadlineAndRateLimitGuard
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -56,6 +57,13 @@ class PaymentExternalSystemAdapterImpl(
         )
     }
 
+    private val guard = DeadlineAndRateLimitGuard(
+        logger,
+        limiter,
+        requestAverageProcessingTime.toMillis()
+    )
+
+
     private val semaphore = Semaphore(parallelRequests, true)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -71,40 +79,8 @@ class PaymentExternalSystemAdapterImpl(
 
         val now = Instant.now().toEpochMilli()
 
-        if (deadline <= now + requestAverageProcessingTime.toMillis()) {
-
-            logger.info("Условие в сервисе и не в лимитере: [deadline < now + averageProcessingTime] не сработало. Выбрасываем ошибку GONE.")
-
-            throw ResponseStatusException(
-                HttpStatus.GONE,
-                "Deadline expired before request could be processed"
-            )
-        }
-
-        if (!limiter.tick()) {
-
-            logger.info("Условие из сервиса: [deadline: $deadline, averageProcessingTime: $requestAverageProcessingTime.toMillis(), now: $now]")
-
-            if (deadline > now + requestAverageProcessingTime.toMillis()) {
-
-                retryCounter.increment()
-
-                logger.info("Условие в сервисе: [deadline < now + averageProcessingTime]  СРАБОТАЛО. Выбрасываем ошибку TOO MANY REQUESTS")
-
-                throw TooManyRequestsException(
-                    500,
-                    "Rate limit exceeded. Try again later."
-                )
-
-            }
-
-            logger.info("Условие в сервисе: [deadline < now + averageProcessingTime] НЕ СРАБОТАЛО. Выбрасываем ошибку GONE")
-
-
-            throw ResponseStatusException(
-                HttpStatus.GONE,
-                "Deadline expired before request could be processed"
-            )
+        guard.check(deadline, now, 20) {
+            retryCounter.increment()
         }
 
         try {
@@ -152,15 +128,6 @@ class PaymentExternalSystemAdapterImpl(
             semaphore.release()
         }
 
-    }
-
-    fun throwIfTooManyRequests() {
-        if (!limiter.tick()){
-            throw ResponseStatusException(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "Rate limit exceeded. Try again later."
-            )
-        }
     }
 
     override fun price() = properties.price
