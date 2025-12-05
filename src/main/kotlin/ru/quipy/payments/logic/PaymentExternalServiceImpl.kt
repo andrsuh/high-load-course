@@ -7,7 +7,7 @@ import io.github.resilience4j.bulkhead.BulkheadConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
-import okhttp3.ConnectionPool
+import okhttp3.Response
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -53,15 +53,12 @@ class PaymentExternalSystemAdapterImpl(
         "payment-bulkhead-$accountName",
         BulkheadConfig.custom()
             .maxConcurrentCalls(parallelRequests)
-            .maxWaitDuration(Duration.ofSeconds(30))
+            .maxWaitDuration(Duration.ofMillis(1_000_000))
             .build()
     )
 
     private val client = OkHttpClient.Builder()
-        .connectionPool(ConnectionPool(parallelRequests * 2, 5, TimeUnit.MINUTES))
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(1350, TimeUnit.MILLISECONDS)
         .build()
 
     private val retryDelayMap = HashMap<UUID, Long>()
@@ -75,7 +72,6 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UUID.randomUUID()
 
-        // Counter: увеличиваем счетчик отправленных запросов
         metrics.incrementSubmissions(accountName)
 
         paymentESService.update(paymentId) {
@@ -102,12 +98,14 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             if (attempt < 3) {
-                val currentDelay = retryDelayMap[paymentId] ?: 0L
-                Thread.sleep(currentDelay)
+                val delayMs = retryDelayMap[paymentId] ?: 0L
+                Thread.sleep(delayMs)
 
-                retryDelayMap[paymentId] = currentDelay + requestAverageProcessingTime.toMillis()
+                retryDelayMap[paymentId] = 0L
 
-                logger.info("[$accountName] Payment $paymentId attempt $attempt failed, will retry after ${currentDelay}ms")
+                metrics.incrementRepeatRequest(accountName)
+
+                logger.info("[$accountName] Payment $paymentId attempt $attempt failed, retrying (delay was ${delayMs}ms)")
             }
         }
 
@@ -166,6 +164,7 @@ class PaymentExternalSystemAdapterImpl(
 
             activeRequestsCount.incrementAndGet()
             try {
+                // Проверка deadline
                 if (now() >= deadline) {
                     metrics.incrementTimeout(accountName, "deadline_expired_in_request")
                     metrics.incrementFailure(accountName, "deadline_expired")
@@ -175,37 +174,49 @@ class PaymentExternalSystemAdapterImpl(
                     return@executeCallable
                 }
 
+                val startTime = now()
+
                 client.newCall(request).execute().use { response ->
-                    val body = try {
-                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-                    }
-
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, attempt: $attempt, succeeded: ${body.result}, message: ${body.message}")
-
-                    val totalDuration = now() - paymentStartedAt
-                    metrics.recordRequestDuration(accountName, totalDuration)
-
-                    if (body.result) {
-                        metrics.incrementSuccess(accountName)
-                    } else {
-                        metrics.incrementFailure(accountName, body.message ?: "unknown")
-                    }
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                    }
-
-                    result = body.result
+                    result = handleResult(response, transactionId, paymentId, attempt)
                 }
+
+                val latency = now() - startTime
+                metrics.recordBankRequestLatency(accountName, latency)
+
             } finally {
                 activeRequestsCount.decrementAndGet()
             }
         }
 
         return result
+    }
+
+    private fun handleResult(
+        response: Response,
+        transactionId: UUID,
+        paymentId: UUID,
+        attempt: Int
+    ): Boolean {
+        val body = try {
+            mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+        } catch (e: Exception) {
+            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+        }
+
+        logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, attempt: $attempt, succeeded: ${body.result}, message: ${body.message}")
+
+        if (body.result) {
+            metrics.incrementSuccess(accountName)
+        } else {
+            metrics.incrementFailure(accountName, body.message ?: "unknown")
+        }
+
+        paymentESService.update(paymentId) {
+            it.logProcessing(body.result, now(), transactionId, reason = body.message)
+        }
+
+        return body.result
     }
 
     override fun price() = properties.price

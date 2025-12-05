@@ -1,0 +1,17 @@
+### КЕЙС 7 (сложный): Тест для аккаунта acc-16
+### ⚠️  ВАЖНО: ПЕРЕД ЗАПУСКОМ ТЕСТА ЗАПУСТИТЕ ПРИЛОЖЕНИЕ С АККАУНТОМ acc-16:
+### export PAYMENT_ACCOUNTS=acc-16 && mvn spring-boot:run
+
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 5,
+  "testCount": 800,
+  "processingTimeMillis": 5000
+}
+
+### Stop running test to save time and resources
+POST http://localhost:1234/test/stop/{{serviceName}}

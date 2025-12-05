@@ -20,8 +20,6 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
     /**
      * Counter метрики - бесконечно растущие счетчики для событий
      */
-
-    // Входящие запросы в платежную систему (до буферизации/очереди)
     fun incrementIncoming(accountName: String) {
         Counter.builder("payment_incoming_requests_total")
             .description("Total number of incoming payment submissions")
@@ -30,7 +28,6 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
-    // Исходящие запросы во внешнюю систему (фактические HTTP вызовы)
     fun incrementOutgoing(accountName: String) {
         Counter.builder("payment_outgoing_requests_total")
             .description("Total number of outgoing payment requests to provider")
@@ -39,7 +36,6 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
-    // Успешные платежи
     fun incrementSuccess(accountName: String) {
         Counter.builder("payment_success_total")
             .description("Total number of successful payments")
@@ -48,7 +44,6 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
-    // Неуспешные платежи
     fun incrementFailure(accountName: String, reason: String) {
         Counter.builder("payment_failures_total")
             .description("Total number of failed payments")
@@ -58,7 +53,6 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
-    // Повторные попытки (retry)
     fun incrementRetry(accountName: String, statusCode: Int) {
         Counter.builder("payment_retries_total")
             .description("Total number of payment retries")
@@ -68,7 +62,6 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
-    // Таймауты
     fun incrementTimeout(accountName: String, timeoutType: String) {
         Counter.builder("payment_timeouts_total")
             .description("Total number of payment timeouts")
@@ -137,12 +130,19 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .increment()
     }
 
+    fun incrementRepeatRequest(accountName: String) {
+        Counter.builder("repeat_request")
+            .description("Total number of repeat requests to bank")
+            .tag("account", accountName)
+            .register(meterRegistry)
+            .increment()
+    }
+
     /**
      * Summary метрики - для измерения времени выполнения с квантилями
      *
      * Summary автоматически вычисляет квантили (0.5, 0.95, 0.99) и sum/count
      */
-
     fun recordRequestDuration(accountName: String, durationMs: Long) {
         DistributionSummary.builder("payment_request_duration_ms")
             .description("Payment request duration in milliseconds")
@@ -161,7 +161,15 @@ class PaymentMetrics(private val meterRegistry: MeterRegistry) {
             .record(waitTimeMs.toDouble())
     }
 
-    // Утилита для очистки reason от специальных символов
+    fun recordBankRequestLatency(accountName: String, latencyMs: Long) {
+        DistributionSummary.builder("request_latency")
+            .description("Bank request latency in milliseconds")
+            .tag("account", accountName)
+            .publishPercentiles(0.9, 0.99, 0.999, 0.9999) // 90%, 99%, 99.9%, 99.99% квантили
+            .register(meterRegistry)
+            .record(latencyMs.toDouble())
+    }
+
     private fun sanitizeReason(reason: String?): String {
         if (reason == null) return "unknown"
         return reason

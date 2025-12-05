@@ -1,0 +1,17 @@
+### КЕЙС 7: Тест для аккаунта acc-7
+### ⚠️  ВАЖНО: ПЕРЕД ЗАПУСКОМ ТЕСТА ЗАПУСТИТЕ ПРИЛОЖЕНИЕ С АККАУНТОМ acc-7:
+### export PAYMENT_ACCOUNTS=acc-7 && mvn spring-boot:run
+
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 5,
+  "testCount": 1000,
+  "processingTimeMillis": 6000
+}
+
+### Stop running test to save time and resources
+POST http://localhost:1234/test/stop/{{serviceName}}
