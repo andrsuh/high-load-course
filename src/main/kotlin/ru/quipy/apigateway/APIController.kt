@@ -7,9 +7,12 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import ru.quipy.common.utils.DeadlineAndRateLimitGuard
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
+import ru.quipy.payments.exceptions.TooManyRequestsException
 import ru.quipy.payments.logic.OrderPayer
+import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl
 import java.time.Duration
 import java.time.Instant
 import java.util.*
@@ -25,7 +28,7 @@ class APIController {
     private lateinit var orderRepository: OrderRepository
 
     private val limiter = SlidingWindowRateLimiter(
-        rate = 10,
+        rate = 8,
         window = Duration.ofMillis(1200))
 
     @Autowired
@@ -46,19 +49,11 @@ class APIController {
         )
     }
 
-    private val simpleCounter by lazy {
-        meterRegistry.counter(
-            "pay_order_requests",
-            "service", "cas-m3404-07"
-        )
-    }
-
-    private val sendRetryCounter by lazy {
-        meterRegistry.counter(
-            "create_order_429_sent",
-            "service", "cas-m3404-07"
-        )
-    }
+    private val guard = DeadlineAndRateLimitGuard(
+        PaymentExternalSystemAdapterImpl.Companion.logger,
+        limiter,
+        1200
+    )
 
     data class CreateUserRequest(val name: String, val password: String)
 
@@ -105,23 +100,10 @@ class APIController {
             retryCounter.increment()
         }
 
-        simpleCounter.increment()
-
         val now = Instant.now().toEpochMilli()
-        val averageProcessingTime = 1200
 
-        if (!limiter.tick()) {
-            if (deadline < now) {
-                return ResponseEntity
-                    .status(HttpStatus.GONE)
-                    .body(mapOf("error" to "Deadline will expire before processing"))
-            }
-
-            sendRetryCounter.increment()
-
-            return ResponseEntity
-                .status(HttpStatus.TOO_MANY_REQUESTS)
-                .body(mapOf("error" to "Rate limit exceeded. Try again later."))
+        guard.check(deadline, now, 20) {
+            retryCounter.increment()
         }
 
         orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))

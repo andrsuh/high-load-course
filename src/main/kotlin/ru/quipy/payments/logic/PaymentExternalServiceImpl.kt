@@ -9,10 +9,13 @@ import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.server.ResponseStatusException
+import ru.quipy.common.utils.DeadlineAndRateLimitGuard
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.exceptions.TooManyRequestsException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.time.Instant
@@ -55,6 +58,13 @@ class PaymentExternalSystemAdapterImpl(
         )
     }
 
+    private val guard = DeadlineAndRateLimitGuard(
+        logger,
+        limiter,
+        requestAverageProcessingTime.toMillis()
+    )
+
+
     private val semaphore = Semaphore(parallelRequests, true)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -70,21 +80,8 @@ class PaymentExternalSystemAdapterImpl(
 
         val now = Instant.now().toEpochMilli()
 
-        if (!limiter.tick()) {
-            if (deadline < now) {
-                throw ResponseStatusException(
-                    HttpStatus.GONE,
-                    "Deadline expired before request could be processed"
-                )
-
-            }
-
+        guard.check(deadline, now, 20) {
             retryCounter.increment()
-
-            throw ResponseStatusException(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "Rate limit exceeded. Try again later."
-            )
         }
 
         try {
