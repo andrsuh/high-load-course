@@ -2,6 +2,9 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.DistributionSummary
+import io.micrometer.core.instrument.MeterRegistry
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -21,7 +24,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-    @Autowired private val metricsReporter: MetricsReporter
+    private val meterRegistry: MeterRegistry
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -36,13 +39,24 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
 
-    private val client = OkHttpClient.Builder().callTimeout((requestAverageProcessingTime.toMillis() * 2), TimeUnit.MILLISECONDS).build()
+    private val client = OkHttpClient.Builder().callTimeout((requestAverageProcessingTime.toMillis() * 1.5).toLong(), TimeUnit.MILLISECONDS).build()
     private val rateLimiter = SlidingWindowRateLimiter(properties.rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val ongoingWindow = OngoingWindow(parallelRequests)
 
     private val maxRetryCount = 3
     private val maxDelay = 1000L
     private val startDelay = 200L
+
+
+    private val submittedCounter = Counter.builder("payments_submitted_total").register(meterRegistry)
+    private val sentQueriesSuccess = Counter.builder("payments_success").register(meterRegistry)
+    private val retryCounter = Counter.builder("payments_retries_total").register(meterRegistry)
+
+    private val requestLatency = DistributionSummary.builder("request_latency")
+        .description("Request latency.")
+        .publishPercentiles(0.5, 0.8, 0.90, 0.95, 0.99)
+        .register(meterRegistry)
+
 
     private fun calculateBackOff(attempt: Int): Long {
 
@@ -95,6 +109,8 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.warn("[$accountName] Submitting payment request for payment $paymentId");
 
+        submittedCounter.increment()
+
         val transactionId = UUID.randomUUID();
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
@@ -132,7 +148,13 @@ class PaymentExternalSystemAdapterImpl(
                         post(emptyBody)
                     }.build();
 
+                    val start = System.currentTimeMillis()
+
                     client.newCall(request).execute().use { response ->
+
+                        val latency = (System.currentTimeMillis() - start).toDouble()
+                        requestLatency.record(latency)
+
                         val body = try {
                             mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                         }catch (e: Exception) {
@@ -152,10 +174,12 @@ class PaymentExternalSystemAdapterImpl(
                         }
 
                         if (body.result || (amountOfRetries == maxRetryCount)) {
+                            sentQueriesSuccess.increment();
                             break;
                         }
 
                         Thread.sleep(calculateBackOff(amountOfRetries));
+                        retryCounter.increment();
                     }
                 }
 
@@ -165,6 +189,7 @@ class PaymentExternalSystemAdapterImpl(
 
                     if (amountOfRetries < maxRetryCount && now() < deadline) {
                         Thread.sleep(calculateBackOff(amountOfRetries))
+                        retryCounter.increment()
                         continue
                     }
                     else {
