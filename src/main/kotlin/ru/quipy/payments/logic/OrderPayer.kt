@@ -26,6 +26,9 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    @Autowired
+    private lateinit var metricsReporter: MetricsReporter
+
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
