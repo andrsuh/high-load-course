@@ -6,12 +6,21 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.OngoingWindow
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.*
+import kotlin.math.min
 
+
+class PaymentRejectedException(val estimatedCompletionTimestamp: Long) :
+    RuntimeException("Payment rejected due to high load. Retry after $estimatedCompletionTimestamp timestamp.") {
+    override fun fillInStackTrace(): Throwable = this
+}
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -35,8 +44,61 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val client = OkHttpClient.Builder().build()
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val parallelRequestsLimiter = OngoingWindow(parallelRequests)
+
+//    private val queueCapacity = 2000
+    private val paymentExecutor: ThreadPoolExecutor = ThreadPoolExecutor(
+        parallelRequests,
+        parallelRequests,
+        60L, TimeUnit.SECONDS,
+        LinkedBlockingQueue<Runnable>()
+    )
+
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        throw PaymentRejectedException(deadline)
+        val currentQueueSize = paymentExecutor.queue.size
+//        if (currentQueueSize >= queueCapacity) {
+//            throw PaymentRejectedException(requestAverageProcessingTime)
+//        }
+
+        val parallelSpeed = parallelRequests * 1000 / requestAverageProcessingTime.toMillis()
+        val speed = min(parallelSpeed, rateLimitPerSec.toLong())
+        val estimatedWaitTime = currentQueueSize / speed * 1000
+        val estimatedCompletionTime = System.currentTimeMillis() + estimatedWaitTime
+
+        if (estimatedCompletionTime > deadline) {
+            logger.warn(
+                "[$accountName] Rejecting payment $paymentId due to high load. " +
+                        "Queue size: $currentQueueSize, estimated wait: ${estimatedWaitTime}ms, deadline will be missed."
+            )
+            throw PaymentRejectedException(estimatedCompletionTime)
+        }
+
+
+        paymentExecutor.submit {
+            try {
+                paymentExecutor.submit {
+                    try {
+                        executePayment(paymentId, amount, paymentStartedAt, deadline)
+                    } catch (e: Exception) {
+                        logger.error("[$accountName] Unhandled exception in payment executor for $paymentId", e)
+                    }
+                }
+            } catch (e: RejectedExecutionException) {
+                // Это происходит, когда очередь заполнена. Это наш back pressure!
+                logger.warn(
+                    "[$accountName] Rejecting payment $paymentId because executor queue is full. " +
+                            "Queue size: ${paymentExecutor.queue.size}"
+                )
+                // Возвращаем среднее время ожидания, так как это хороший индикатор времени на "разгрузку"
+//                throw PaymentRejectedException(requestAverageProcessingTime)
+            }
+        }
+    }
+
+    private fun executePayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -55,12 +117,15 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
+            parallelRequestsLimiter.acquire()
+            rateLimiter.tickBlocking()
+
             client.newCall(request).execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
@@ -88,6 +153,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            parallelRequestsLimiter.release()
         }
     }
 
