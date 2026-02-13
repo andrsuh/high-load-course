@@ -6,7 +6,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class OngoingWindow(
     maxWinSize: Int
 ) {
-    private val window = Semaphore(maxWinSize)
+    private val window = Semaphore(maxWinSize, true)
 
     fun acquire() {
         window.acquire()
