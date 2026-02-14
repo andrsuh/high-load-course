@@ -6,11 +6,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.payments.logic.PaymentRateLimiterFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.Executors
 
 
 // Advice: always treat time as a Duration
@@ -19,6 +21,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    private val rateLimiterFactory: PaymentRateLimiterFactory
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -33,10 +36,26 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val rateLimiter by lazy {
+        rateLimiterFactory.getRateLimiterForAccount(accountName, (rateLimitPerSec * 0.9).toInt())
+    }
+    private val paymentExecutor = Executors.newFixedThreadPool(parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        paymentExecutor.submit {
+            try {
+                rateLimiter.tickBlocking()
+
+                executePayment(paymentId, amount, paymentStartedAt, deadline)
+            } catch (e: Exception) {
+                logger.error("[$accountName] Failed to process payment $paymentId", e)
+            }
+        }
+    }
+
+    private fun executePayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
