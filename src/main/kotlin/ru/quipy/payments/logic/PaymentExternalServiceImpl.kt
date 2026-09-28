@@ -6,6 +6,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.OngoingWindow
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -34,26 +36,52 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient.Builder().retryOnConnectionFailure(false).readTimeout(Duration.ZERO).build()
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val ongoingWindow = OngoingWindow(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
 
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-        }
-
-        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-
+        var windowAcquired = false
         try {
+
+            val latestStart = deadline - requestAverageProcessingTime.toMillis()
+            val acquired = try {
+                windowAcquired = ongoingWindow.acquire(Duration.ofMillis(latestStart - now()))
+                windowAcquired && rateLimiter.tickBlocking(Duration.ofMillis(latestStart - now())) && now() < latestStart
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+
+            val submittedAt = now()
+            paymentESService.update(paymentId) {
+                it.logSubmission(acquired, transactionId, submittedAt, Duration.ofMillis(submittedAt - paymentStartedAt))
+            }
+            
+            logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
+            
+            if (!acquired) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Outdated payment")
+                }
+                return
+            }
+
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
             }.build()
+
+            if (now() >= latestStart) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "There is no time for payment")
+                }
+                return
+            }
 
             client.newCall(request).execute().use { response ->
                 val body = try {
@@ -88,6 +116,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            if (windowAcquired) ongoingWindow.release()
         }
     }
 

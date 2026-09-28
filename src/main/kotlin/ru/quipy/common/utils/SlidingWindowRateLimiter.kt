@@ -39,6 +39,19 @@ class SlidingWindowRateLimiter(
         }
     }
 
+    fun tickBlocking(timeout: Duration): Boolean {
+        if (timeout.isNegative || timeout.isZero) return false
+        val startedAt = System.nanoTime()
+        val budgetNanos = timeout.toNanos()
+        while (true) {
+            if (Thread.currentThread().isInterrupted) throw InterruptedException()
+            val remainingNanos = budgetNanos - (System.nanoTime() - startedAt)
+            if (remainingNanos <= 0) return false
+            if (tick()) return true
+            java.util.concurrent.TimeUnit.NANOSECONDS.sleep(minOf(Duration.ofMillis(10).toNanos(), remainingNanos))
+        }
+    }
+
     data class Measure(
         val value: Long,
         val timestamp: Long
