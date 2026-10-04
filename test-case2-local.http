@@ -1,0 +1,11 @@
+### Case 2: start the application with PAYMENT_ACCOUNTS=acc-5
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "ratePerSecond": 2,
+  "testCount": 100,
+  "processingTimeMillis": 60000
+}

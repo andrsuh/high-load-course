@@ -73,66 +73,78 @@ class PaymentExternalSystemAdapterImpl(
             return
         }
 
-        rateLimiter.tickBlocking()
-
-        if (now() + avgProcessingMs > deadline) {
-            logger.warn("[$accountName] Skip after throttle, deadline would be missed. payment: $paymentId")
+        // Reserve concurrency first: a rate permit must be consumed close to HTTP submission,
+        // rather than expiring while this payment waits behind slow requests.
+        val latestSubmissionAt = deadline - avgProcessingMs
+        if (!window.tryAcquire(latestSubmissionAt - now())) {
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded after throttle")
+                it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for concurrent request slot")
             }
             return
         }
 
-        window.acquire()
-
-        val request = Request.Builder().run {
-            url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-            post(emptyBody)
-        }.build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    val body = try {
-                        mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}")
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-                    }
-
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                    }
-                } finally {
-                    response.close()
-                    window.release()
+        var submitted = false
+        try {
+            if (!rateLimiter.tickBlockingUntil(latestSubmissionAt) || now() + avgProcessingMs > deadline) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded before HTTP submit")
                 }
+                return
             }
 
-            override fun onFailure(call: Call, e: IOException) {
-                try {
-                    when (e) {
-                        is SocketTimeoutException -> {
-                            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                            }
+            val request = Request.Builder().run {
+                url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
+                post(emptyBody)
+            }.build()
+
+            client.newCall(request).enqueue(object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val body = try {
+                            mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+                        } catch (e: Exception) {
+                            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}")
+                            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                         }
 
-                        else -> {
-                            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(false, now(), transactionId, reason = e.message)
+                        logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                        }
+                    } finally {
+                        response.close()
+                        window.release()
+                    }
+                }
+
+                override fun onFailure(call: Call, e: IOException) {
+                    try {
+                        when (e) {
+                            is SocketTimeoutException -> {
+                                logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                                paymentESService.update(paymentId) {
+                                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                                }
+                            }
+
+                            else -> {
+                                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                                paymentESService.update(paymentId) {
+                                    it.logProcessing(false, now(), transactionId, reason = e.message)
+                                }
                             }
                         }
+                    } finally {
+                        window.release()
                     }
-                } finally {
-                    window.release()
                 }
-            }
-        })
+            })
+            submitted = true
+        } finally {
+            // After enqueue, the callback owns the slot. Before enqueue, this thread owns it.
+            if (!submitted) window.release()
+        }
     }
 
     override fun price() = properties.price

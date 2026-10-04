@@ -1,0 +1,15 @@
+### Case 2: push hw2 before running on the course server
+# @timeout 120
+POST http://77.234.215.138:34321/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "branch": "hw2",
+  "accounts": "acc-5",
+  "ratePerSecond": 2,
+  "testCount": 100,
+  "processingTimeMillis": 60000,
+  "onPremises": true
+}
