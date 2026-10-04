@@ -51,4 +51,46 @@ class PaymentLimitsTest {
         assertTrue(limiter.tickBlockingUntil(System.currentTimeMillis() + 2_000))
         assertFalse(limiter.tick())
     }
+
+    @Test
+    fun `rate reservation does not expire while waiting for a semaphore`() {
+        val limiter = SlidingWindowRateLimiter(1, Duration.ofMillis(50))
+        val window = OngoingWindow(1)
+        assertTrue(window.tryAcquire(0))
+        val permit = requireNotNull(limiter.reserveBlockingUntil(System.currentTimeMillis() + 1_000))
+        try {
+            // Wait longer than the rate window behind an occupied concurrency slot.
+            assertFalse(window.tryAcquire(150))
+            assertNull(limiter.reserveBlockingUntil(System.currentTimeMillis() + 50))
+            window.release()
+            assertTrue(window.tryAcquire(0))
+            permit.markSubmitted()
+            assertFalse(limiter.tick())
+            assertTrue(limiter.tickBlockingUntil(System.currentTimeMillis() + 2_000))
+            window.release()
+        } finally {
+            permit.close()
+        }
+    }
+
+    @Test
+    fun `abandoned reservation returns exactly one permit without an HTTP call`() {
+        val limiter = SlidingWindowRateLimiter(1, Duration.ofSeconds(5))
+        val permit = requireNotNull(limiter.reserveBlockingUntil(System.currentTimeMillis() + 1_000))
+        assertFalse(limiter.tick())
+        permit.close()
+        permit.close()
+        assertTrue(limiter.tick())
+        assertFalse(limiter.tick())
+    }
+
+    @Test
+    fun `closing a submitted reservation cannot release its permit early`() {
+        val limiter = SlidingWindowRateLimiter(1, Duration.ofSeconds(5))
+        val permit = requireNotNull(limiter.reserveBlockingUntil(System.currentTimeMillis() + 1_000))
+        permit.markSubmitted()
+        permit.close()
+        permit.close()
+        assertFalse(limiter.tick())
+    }
 }

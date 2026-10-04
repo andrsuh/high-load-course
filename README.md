@@ -60,48 +60,54 @@ git merge upstream/main
 ### Case 2 (`hw2`)
 
 Use account `acc-5` with `ratePerSecond=2`, `testCount=100`, and
-`processingTimeMillis=60000`. The local provider reports 3 requests/second,
+`processingTimeMillis=60000`. The provider reports 3 requests/second,
 5 concurrent requests, average processing time 4.9 seconds, and cost 30 per call.
+The existing payment executor still has 16 workers and a bounded queue.
+
+The adapter keeps the order **rate limiter -> concurrency semaphore -> HTTP**.
+A rate permit is reserved first and remains occupied while waiting for a free
+concurrency slot. Its one-second sliding window starts immediately before HTTP
+submission. Thus, old permits cannot expire while requests wait for the
+semaphore and later allow a burst of submissions above the rate limit.
+If a deadline is missed before submission, the rate reservation is returned
+without making a provider call. Once submitted, it is returned after one second,
+independently of the response. The concurrency slot is returned in the callback.
+Both waits stop at `deadline - averageProcessingTime`, followed by a deadline
+check immediately before HTTP submission. Both semaphores use fair waiting.
 
 The concurrency limit is the bottleneck: `min(3, 5 / 4.9) = 1.02` payments/second.
 Incoming load is higher, so payments wait in the existing bounded queue. For this
 finite test, estimated waiting plus processing for the last payments is about
-53 seconds. This estimate uses the average response time; the test must verify
-the actual response times and deadlines.
-
-The adapter reserves a concurrent request slot **before** obtaining a rate
-permit. Otherwise, a permit can expire while a request waits for concurrency,
-and several waiting requests can then be submitted together above the rate
-limit. Both waits stop at `deadline - averageProcessingTime`, followed by a
-deadline check immediately before HTTP submission. The semaphore uses fair
-ordering, and its slot is released on rejection before enqueue or in the HTTP
-callback after enqueue. Payment submission and processing events remain recorded.
+53 seconds. The estimate uses average processing time, so actual deadlines must
+be checked in a complete load test.
 
 Start the application with the same team credentials as case 1 and
 `PAYMENT_ACCOUNTS=acc-5`. Run [test-case2-local.http](test-case2-local.http) locally.
 For the course server, [test-case2-remote.http](test-case2-remote.http) selects
-branch `hw2` and account `acc-5`; publish the branch before using that request.
+branch `hw2` and account `acc-5`; push the branch before using that request.
+Build and run the seven automated limiter tests with `mvn package`.
 
-Build and run the automated limiter tests with `mvn package`.
+Income/expenses shares use `income / (income + providerCost)`, as in Grafana.
+With exactly 100 calls costing 30 each, reaching 93% income share requires total
+successful order income of at least 39857.143. Random order amounts affect this
+percentage even with all payments successful and exactly one call per order.
 
-Local validation on 2026-10-03 with the case parameters:
+Local validation on 2026-10-04 of this rate limiter -> semaphore implementation:
 
-| Metric | Existing `hw1` application | `hw2` |
-| --- | --- | --- |
-| Successful tests | 96 / 100 | 100 / 100 |
-| Rate-limit violations | 4 | 0 |
-| Concurrent-request violations | 0 | 0 |
-| Maximum payment time including queue | Not measured | 53.661 seconds |
-| Calls / total provider cost | 100 / 3000 | 100 / 3000 |
+| Metric | Result |
+| --- | --- |
+| Successful tests | 100 / 100 |
+| Rate-limit violations | 0 |
+| Provider calls / total cost | 100 / 3000 |
+| Maximum payment time including queue | 56.286 seconds (< 60 seconds) |
+| Income / expenses shares | 92.895% / 7.105% |
 
-All four automated limiter tests pass. Provider metric counters were measured
-as differences before and after each run. The maximum payment time was checked
-against the 100 matching persisted payment events, including time in the queue.
-These are local results; the course server has not been tested with `hw2` yet.
-
-The `hw2` run generated successful order income of 37194, giving income/expenses
-shares of 92.536% / 7.464% using the dashboard formula
-`income / (income + providerCost)`. Order amounts are randomly generated, so
-this percentage can differ between runs even with all payments successful and
-exactly one provider call per order. This run does not establish a 93% income
-share if that threshold is required for case 2.
+All seven automated tests pass, including a reservation waiting behind an
+occupied semaphore longer than one rate window, reservation cancellation,
+and preventing early release after submission. Provider outcomes were all
+SUCCESS. Counts were measured as differences before and after the load test;
+maximum payment time was checked against all 100 matching persisted events.
+Generated successful order income was 39225. Financial share is below
+the general 93% target in this sample despite all payments succeeding and
+one provider call per order. No claim of meeting that target or of passing the
+course server is made for this version; the remote run is still required.

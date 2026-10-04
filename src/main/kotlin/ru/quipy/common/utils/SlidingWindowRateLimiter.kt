@@ -9,9 +9,9 @@ import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.PriorityBlockingQueue
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class SlidingWindowRateLimiter(
     private val rate: Long,
@@ -19,18 +19,13 @@ class SlidingWindowRateLimiter(
 ) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
-    private val sum = AtomicLong(0)
+    private val permits = Semaphore(Math.toIntExact(rate), true)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
 
     override fun tick(): Boolean {
-        while (true) {
-            val curSum = sum.get()
-            if (curSum >= rate) return false
-            if (sum.compareAndSet(curSum, curSum + 1)) {
-                queue.add(Measure(1, System.currentTimeMillis()))
-                return true
-            }
-        }
+        if (!permits.tryAcquire()) return false
+        Permit().markSubmitted()
+        return true
     }
 
     fun tickBlocking() {
@@ -40,12 +35,30 @@ class SlidingWindowRateLimiter(
     }
 
     fun tickBlockingUntil(deadline: Long): Boolean {
-        while (System.currentTimeMillis() < deadline) {
-            if (tick()) return true
-            val remaining = deadline - System.currentTimeMillis()
-            if (remaining > 0) Thread.sleep(minOf(10L, remaining))
+        val permit = reserveBlockingUntil(deadline) ?: return false
+        permit.markSubmitted()
+        return true
+    }
+
+    fun reserveBlockingUntil(deadline: Long): Permit? {
+        val remaining = deadline - System.currentTimeMillis()
+        if (remaining <= 0 || !permits.tryAcquire(remaining, TimeUnit.MILLISECONDS)) return null
+        return Permit()
+    }
+
+    // A reservation stays occupied while the caller waits for concurrency.
+    // Its rate window begins only when the caller actually submits the request.
+    inner class Permit internal constructor() : AutoCloseable {
+        private val completed = AtomicBoolean(false)
+
+        fun markSubmitted() {
+            check(completed.compareAndSet(false, true)) { "Rate permit already completed" }
+            queue.add(Measure(1, System.currentTimeMillis()))
         }
-        return false
+
+        override fun close() {
+            if (completed.compareAndSet(false, true)) permits.release()
+        }
     }
 
     data class Measure(
@@ -69,8 +82,8 @@ class SlidingWindowRateLimiter(
                 delay(head.timestamp - winStart)
                 continue
             }
-            sum.addAndGet(-1)
             queue.take()
+            permits.release()
         }
     }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
     companion object {

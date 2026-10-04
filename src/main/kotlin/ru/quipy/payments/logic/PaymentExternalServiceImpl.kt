@@ -73,19 +73,27 @@ class PaymentExternalSystemAdapterImpl(
             return
         }
 
-        // Reserve concurrency first: a rate permit must be consumed close to HTTP submission,
-        // rather than expiring while this payment waits behind slow requests.
         val latestSubmissionAt = deadline - avgProcessingMs
-        if (!window.tryAcquire(latestSubmissionAt - now())) {
+        val ratePermit = rateLimiter.reserveBlockingUntil(latestSubmissionAt)
+        if (ratePermit == null) {
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for concurrent request slot")
+                it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
             }
             return
         }
 
+        var slotAcquired = false
         var submitted = false
         try {
-            if (!rateLimiter.tickBlockingUntil(latestSubmissionAt) || now() + avgProcessingMs > deadline) {
+            if (!window.tryAcquire(latestSubmissionAt - now())) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for concurrent request slot")
+                }
+                return
+            }
+            slotAcquired = true
+
+            if (now() + avgProcessingMs > deadline) {
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded before HTTP submit")
                 }
@@ -97,6 +105,7 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
+            ratePermit.markSubmitted()
             client.newCall(request).enqueue(object : Callback {
                 override fun onResponse(call: Call, response: Response) {
                     try {
@@ -142,8 +151,9 @@ class PaymentExternalSystemAdapterImpl(
             })
             submitted = true
         } finally {
+            ratePermit.close()
             // After enqueue, the callback owns the slot. Before enqueue, this thread owns it.
-            if (!submitted) window.release()
+            if (slotAcquired && !submitted) window.release()
         }
     }
 
