@@ -4,6 +4,8 @@ import java.time.Duration
 import java.util.*
 
 interface PaymentService {
+    fun canAccept(deadline: Long, queuedRequests: Int): Boolean
+
     /**
      * Submit payment request to some external service.
      */
@@ -18,6 +20,8 @@ interface PaymentService {
  */
 interface PaymentExternalSystemAdapter {
     fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
+
+    fun canAccept(deadline: Long, queuedRequests: Int): Boolean
 
     fun name(): String
 
