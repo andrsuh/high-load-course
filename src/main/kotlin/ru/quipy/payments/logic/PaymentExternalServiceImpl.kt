@@ -20,7 +20,6 @@ import java.time.Duration
 import java.util.*
 
 
-// Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
@@ -152,7 +151,6 @@ class PaymentExternalSystemAdapterImpl(
             submitted = true
         } finally {
             ratePermit.close()
-            // After enqueue, the callback owns the slot. Before enqueue, this thread owns it.
             if (slotAcquired && !submitted) window.release()
         }
     }

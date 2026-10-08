@@ -28,26 +28,12 @@ class SlidingWindowRateLimiter(
         return true
     }
 
-    fun tickBlocking() {
-        while (!tick()) {
-            Thread.sleep(10)
-        }
-    }
-
-    fun tickBlockingUntil(deadline: Long): Boolean {
-        val permit = reserveBlockingUntil(deadline) ?: return false
-        permit.markSubmitted()
-        return true
-    }
-
     fun reserveBlockingUntil(deadline: Long): Permit? {
         val remaining = deadline - System.currentTimeMillis()
         if (remaining <= 0 || !permits.tryAcquire(remaining, TimeUnit.MILLISECONDS)) return null
         return Permit()
     }
 
-    // A reservation stays occupied while the caller waits for concurrency.
-    // Its rate window begins only when the caller actually submits the request.
     inner class Permit internal constructor() : AutoCloseable {
         private val completed = AtomicBoolean(false)
 
