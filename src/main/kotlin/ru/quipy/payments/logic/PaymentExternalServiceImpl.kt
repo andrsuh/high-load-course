@@ -6,11 +6,14 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.PacedRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -33,6 +36,10 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val rateLimiter = PacedRateLimiter(rateLimitPerSec)
+    private val paymentSlots = Semaphore(parallelRequests.also {
+        require(it > 0) { "Parallel requests must be positive" }
+    }, true)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -40,6 +47,56 @@ class PaymentExternalSystemAdapterImpl(
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
+
+        val submissionDeadline = deadline - requestAverageProcessingTime.toMillis()
+        val acquired = try {
+            val remaining = submissionDeadline - now()
+            remaining > 0 && paymentSlots.tryAcquire(remaining, TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            rejectPayment(paymentId, transactionId, paymentStartedAt, "Interrupted while waiting for payment slot.")
+            return
+        }
+        if (!acquired) {
+            rejectPayment(paymentId, transactionId, paymentStartedAt, "Not enough time to wait for payment slot and process payment.")
+            return
+        }
+
+        try {
+            performPaymentWithSlot(paymentId, amount, paymentStartedAt, deadline, submissionDeadline, transactionId)
+        } finally {
+            paymentSlots.release()
+        }
+    }
+
+    private fun rejectPayment(paymentId: UUID, transactionId: UUID, paymentStartedAt: Long, reason: String) {
+        paymentESService.update(paymentId) {
+            it.logSubmission(false, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        }
+        paymentESService.update(paymentId) {
+            it.logProcessing(false, now(), transactionId, reason = reason)
+        }
+    }
+
+    private fun performPaymentWithSlot(
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long,
+        submissionDeadline: Long,
+        transactionId: UUID,
+    ) {
+
+        val rejectionReason = try {
+            if (rateLimiter.acquire(submissionDeadline)) null else "Not enough time to wait for rate limit and process payment."
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            "Interrupted while waiting for rate limit permission."
+        }
+        if (rejectionReason != null) {
+            rejectPayment(paymentId, transactionId, paymentStartedAt, rejectionReason)
+            return
+        }
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -55,11 +112,20 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            client.newCall(request).execute().use { response ->
+            val remaining = deadline - now()
+            if (remaining <= 0) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Payment deadline exceeded before HTTP call.")
+                }
+                return
+            }
+            val call = client.newCall(request)
+            call.timeout().timeout(remaining, TimeUnit.MILLISECONDS)
+            call.execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                    logger.error("[$accountName] Invalid payment response for txId: $transactionId, payment: $paymentId, result code: ${response.code}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
                 }
 
