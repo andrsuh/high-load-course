@@ -6,6 +6,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import io.github.resilience4j.ratelimiter.RateLimiter
+import io.github.resilience4j.ratelimiter.RateLimiterConfig
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -33,6 +35,18 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    init {
+        require(rateLimitPerSec > 0) { "Rate must be positive" }
+    }
+
+    private val rateLimiter = RateLimiter.of(
+        "$serviceName:$accountName",
+        RateLimiterConfig.custom()
+            .limitForPeriod(1)
+            .limitRefreshPeriod(Duration.ofNanos((1_030_000_000L + rateLimitPerSec - 1) / rateLimitPerSec))
+            .timeoutDuration(Duration.ZERO)
+            .build()
+    )
 
     private val client = OkHttpClient.Builder().build()
 
@@ -40,6 +54,22 @@ class PaymentExternalSystemAdapterImpl(
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
+
+        val rejectionReason = try {
+            if (awaitRateLimitPermission(deadline)) null else "Payment deadline exceeded before submission."
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            "Interrupted while waiting for rate limit permission."
+        }
+        if (rejectionReason != null) {
+            paymentESService.update(paymentId) {
+                it.logSubmission(false, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+            }
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = rejectionReason)
+            }
+            return
+        }
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -88,6 +118,16 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        }
+    }
+
+    private fun awaitRateLimitPermission(deadline: Long): Boolean {
+        while (true) {
+            if (Thread.currentThread().isInterrupted) throw InterruptedException()
+            val remainingMillis = deadline - now()
+            if (remainingMillis <= 0) return false
+            if (rateLimiter.acquirePermission()) return now() < deadline
+            Thread.sleep(minOf(10L, remainingMillis))
         }
     }
 
