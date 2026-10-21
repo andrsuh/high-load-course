@@ -33,8 +33,8 @@ class OrderPayer {
     private val incomingPayments by lazy { meterRegistry.counter("shop.payments.incoming") }
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        512,
+        512,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(8_000),
@@ -45,13 +45,19 @@ class OrderPayer {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
         incomingPayments.increment()
+        paymentService.tryReserve(deadline)?.let { retryAfter -> throw TooManyRequestsException(retryAfter) }
         paymentExecutor.submit {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
+            val createdEvent = try {
+                paymentESService.create {
+                    it.create(
+                        paymentId,
+                        orderId,
+                        amount
+                    )
+                }
+            } catch (e: Exception) {
+                paymentService.releaseReservation()
+                throw e
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
@@ -60,3 +66,5 @@ class OrderPayer {
         return createdAt
     }
 }
+
+class TooManyRequestsException(val retryAfter: Long) : RuntimeException("Too many requests. You can retry after $retryAfter")

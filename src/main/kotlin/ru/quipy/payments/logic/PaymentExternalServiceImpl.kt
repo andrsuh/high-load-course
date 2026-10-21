@@ -15,6 +15,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.atomic.AtomicInteger
 
 
 // Advice: always treat time as a Duration
@@ -31,6 +32,27 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        const val PROCESSING_TIME = 1.5
+        const val RETRY_AFTER = 50L
+    }
+
+    override fun tryReserve(deadline: Long): Long? {
+        val now = now()
+        val maxPending = (deadline - now - processingBudgetMillis) * rateLimitPerSec / 1000
+        while (true) {
+            val pending = pendingPayments.get()
+            if (pending >= maxPending) {
+                return now + RETRY_AFTER
+            }
+            if (pendingPayments.compareAndSet(pending, pending + 1)) {
+                return null
+            }
+        }
+    }
+
+    override fun releaseReservation() {
+        pendingPayments.decrementAndGet()
     }
 
     private val serviceName = properties.serviceName
@@ -47,6 +69,10 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     private val ongoingWindow = OngoingWindow(parallelRequests)
+
+    private val pendingPayments = AtomicInteger(0)
+
+    private val processingBudgetMillis = (requestAverageProcessingTime.toMillis() * PROCESSING_TIME).toLong()
 
     private val outgoingRequests = Counter.builder("shop.provider.requests")
         .tag("account", accountName)
@@ -69,6 +95,7 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
+        var reserved = true
         ongoingWindow.acquire()
         try {
             if (deadline - now() < requestAverageProcessingTime.toMillis()) {
@@ -80,6 +107,8 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             rateLimiter.tickBlocking()
+            releaseReservation()
+            reserved = false
             outgoingRequests.increment()
 
             val request = Request.Builder().run {
@@ -121,6 +150,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } finally {
+            if (reserved) releaseReservation()
             ongoingWindow.release()
         }
     }

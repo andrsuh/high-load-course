@@ -1,4 +1,5 @@
 ### Run test remotely
+@serviceName = variable value
 # @timeout 120
 POST http://77.234.215.138:34321/run
 Content-Type: application/json
@@ -6,11 +7,11 @@ Content-Type: application/json
 {
   "serviceName": "{{serviceName}}",
   "token": "{{token}}",
-  "branch": "main",
-  "accounts": "acc-12,acc-20",
-  "ratePerSecond": 2,
-  "testCount": 10,
-  "processingTimeMillis": 80000,
+  "branch": "hw-4",
+  "accounts": "acc-18",
+  "ratePerSecond": 200,
+  "testCount": 6000,
+  "processingTimeMillis": 3000,
   "onPremises": true
 }
 
