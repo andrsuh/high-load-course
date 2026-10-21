@@ -7,6 +7,9 @@ import org.springframework.web.bind.annotation.*
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.util.*
+import java.util.concurrent.RejectedExecutionException
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 
 @RestController
 class APIController {
@@ -57,15 +60,20 @@ class APIController {
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val paymentId = UUID.randomUUID()
-        val order = orderRepository.findById(orderId)?.let {
-            orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
-            it
-        } ?: throw IllegalArgumentException("No such order $orderId")
+        val order = orderRepository.findById(orderId)
+            ?: throw IllegalArgumentException("No such order $orderId")
 
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+        orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
         return PaymentSubmissionDto(createdAt, paymentId)
     }
+
+    @ExceptionHandler(RejectedExecutionException::class)
+    fun paymentQueueFull(): ResponseEntity<Map<String, String>> = ResponseEntity
+        .status(HttpStatus.TOO_MANY_REQUESTS)
+        .header("Retry-After", "1")
+        .body(mapOf("error" to "Payment queue is full; retry later"))
 
     class PaymentSubmissionDto(
         val timestamp: Long,
