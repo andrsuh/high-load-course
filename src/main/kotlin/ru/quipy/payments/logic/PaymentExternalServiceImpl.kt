@@ -33,7 +33,7 @@ class PaymentExternalSystemAdapterImpl(
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
 
-        const val PROCESSING_TIME = 1.5
+        const val PROCESSING_TIME = 2
         const val RETRY_AFTER = 50L
     }
 

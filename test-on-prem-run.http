@@ -1,5 +1,4 @@
 ### Run test remotely
-@serviceName = variable value
 # @timeout 120
 POST http://77.234.215.138:34321/run
 Content-Type: application/json
