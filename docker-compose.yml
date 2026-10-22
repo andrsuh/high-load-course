@@ -41,7 +41,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=quipy
       - GF_USERS_ALLOW_SIGN_UP=false
     ports:
-      - 3000:3000
+      - "3456:3000"
     depends_on:
       - prometheus
     networks:

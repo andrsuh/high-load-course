@@ -24,6 +24,8 @@ interface PaymentExternalSystemAdapter {
     fun price(): Int
 
     fun isEnabled(): Boolean
+
+    fun pendingRequests(): Int
 }
 
 /**
@@ -47,4 +49,15 @@ class ExternalSysResponse(
     val paymentId: String,
     val result: Boolean,
     val message: String? = null,
+)
+
+/**
+ * Describes request for payment to queue it.
+ */
+data class PaymentTask(
+    val paymentId: UUID,
+    val transactionId: UUID,
+    val amount: Int,
+    val paymentStartedAt: Long,
+    val deadline: Long,
 )

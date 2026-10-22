@@ -4,6 +4,9 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+grafana/data
+prometheus/data
+
 ### STS ###
 .apt_generated
 .classpath
@@ -18,7 +21,7 @@ target/
 *.iws
 *.iml
 *.ipr
-./http-client.env.json
+/http-client.env.json
 
 ### NetBeans ###
 /nbproject/private/
