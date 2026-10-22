@@ -4,9 +4,10 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 
 class OngoingWindow(
-    maxWinSize: Int
+    private val maxWinSize: Int,
+    fair: Boolean = false,
 ) {
-    private val window = Semaphore(maxWinSize)
+    private val window = Semaphore(maxWinSize, fair)
 
     fun acquire() {
         window.acquire()
@@ -15,6 +16,8 @@ class OngoingWindow(
     fun release() = window.release()
 
     fun awaitingQueueSize() = window.queueLength
+
+    fun inFlight() = maxWinSize - window.availablePermits()
 }
 
 class NonBlockingOngoingWindow(

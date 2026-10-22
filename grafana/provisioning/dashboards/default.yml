@@ -7,3 +7,9 @@ providers:
     options:
       path:
         /etc/grafana/provisioning/dashboards/ServicesStatistic.json
+  - name: OnlineShop
+    folder: online-shop
+    type: file
+    options:
+      path:
+        /etc/grafana/provisioning/dashboards/OnlineShopPaymentWindow.json

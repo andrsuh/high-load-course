@@ -26,4 +26,7 @@ class PaymentSystemImpl(
             account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
         }
     }
+
+    override fun estimatedFinishTime(paymentsAhead: Int): Long =
+        paymentAccounts.maxOf { it.estimatedFinishTime(paymentsAhead) }
 }
