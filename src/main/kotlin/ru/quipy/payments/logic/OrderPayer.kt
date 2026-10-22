@@ -26,9 +26,12 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    @Autowired
+    private lateinit var paymentFlowMetrics: PaymentFlowMetrics
+
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        200,
+        200,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(8_000),
@@ -38,6 +41,7 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
+        paymentFlowMetrics.received()
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(
@@ -52,4 +56,6 @@ class OrderPayer {
         }
         return createdAt
     }
+
+    fun canAcceptPayment(): Boolean = paymentService.canAcceptPayment()
 }

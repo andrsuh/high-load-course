@@ -26,4 +26,8 @@ class PaymentSystemImpl(
             account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
         }
     }
+
+    override fun canAcceptPayment(): Boolean {
+        return paymentAccounts.any { it.canAcceptPayment() }
+    }
 }
