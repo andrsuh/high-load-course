@@ -1,0 +1,52 @@
+package ru.quipy.apigateway
+
+import io.micrometer.core.instrument.MeterRegistry
+import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.RateLimiter
+
+class IngressRateLimiter(
+    private val delegate: RateLimiter?,
+    meterRegistry: MeterRegistry,
+) {
+    companion object {
+        private val logger = LoggerFactory.getLogger(IngressRateLimiter::class.java)
+
+        private const val WAIT_STEP_MS = 5L
+    }
+
+    private val admitted = meterRegistry.counter("ingress_rate_limiter_total", "result", "admitted")
+    private val rejected = meterRegistry.counter("ingress_rate_limiter_total", "result", "rejected")
+    private val failed = meterRegistry.counter("ingress_rate_limiter_total", "result", "failed_open")
+
+    val enabled: Boolean get() = delegate != null
+
+    fun tryAcquire(waitBudgetMs: Long = 0L): Boolean {
+        val limiter = delegate
+        if (limiter == null) {
+            admitted.increment()
+            return true
+        }
+
+        val waitUntil = System.nanoTime() + waitBudgetMs * 1_000_000L
+        while (true) {
+            val allowed = try {
+                limiter.tick()
+            }
+            catch (e: Exception) {
+                failed.increment()
+                logger.error("Ingress rate limiter failed, request is allowed", e)
+                true
+            }
+
+            if (allowed) {
+                admitted.increment()
+                return true
+            }
+            if (System.nanoTime() >= waitUntil) {
+                rejected.increment()
+                return false
+            }
+            Thread.sleep(WAIT_STEP_MS)
+        }
+    }
+}
