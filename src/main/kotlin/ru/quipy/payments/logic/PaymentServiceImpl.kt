@@ -8,6 +8,8 @@ import java.util.*
 class PaymentSystemImpl(
     private val paymentAccounts: List<PaymentExternalSystemAdapter>
 ) : PaymentService {
+    override fun admissionRate(): Int = paymentAccounts.minOf { it.ratePerSecond() }
+
     override fun workerCount(): Int = paymentAccounts.minOf { it.parallelCapacity() }.coerceAtLeast(1)
 
     override fun latestStart(deadline: Long): Long = paymentAccounts.minOf { it.latestStart(deadline) }

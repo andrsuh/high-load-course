@@ -22,6 +22,7 @@ class OrderPayer(
     private val meterRegistry: io.micrometer.core.instrument.MeterRegistry,
     private val paymentService: PaymentService,
     @Value("\${payment.queue.capacity:110}") queueCapacity: Int,
+    @Value("\${payment.admission.max-in-flight:300}") maxInFlight: Int,
 ) {
 
     companion object {
@@ -31,19 +32,35 @@ class OrderPayer(
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
+    init { require(maxInFlight > 0) }
+
+    private val workers = paymentService.workerCount()
+
+    private val admission = ru.quipy.common.utils.PaymentAdmissionLimiter(
+        paymentService.admissionRate(), maxInFlight = maxInFlight,
+        windowMillis = TimeUnit.SECONDS.toMillis(1)
+    )
     private val sequence = AtomicLong()
     private val paymentExecutor = ThreadPoolExecutor(
-        paymentService.workerCount(),
-        paymentService.workerCount(),
-        0L,
-        TimeUnit.MILLISECONDS,
+        workers,
+        workers,
+        30L,
+        TimeUnit.SECONDS,
         PaymentPriorityQueue(queueCapacity),
         NamedThreadFactory("payment-submission-executor"),
         ThreadPoolExecutor.AbortPolicy()
     )
 
+    private val dispatchScheduler = ru.quipy.common.utils.PaymentAdmissionDispatcher(admission, paymentExecutor) { e ->
+        meterRegistry.counter("payment.admission.rejected").increment()
+        logger.warn("Scheduled payment dispatch rejected", e)
+    }
+
     init {
         paymentExecutor.prestartAllCoreThreads()
+        io.micrometer.core.instrument.Gauge.builder("payment.admission.scheduled", dispatchScheduler) {
+            it.pendingCount.toDouble()
+        }.register(meterRegistry)
         io.micrometer.core.instrument.Gauge.builder("payment.queue.size", paymentExecutor) {
             it.queue.size.toDouble()
         }.register(meterRegistry)
@@ -54,11 +71,16 @@ class OrderPayer(
 
     @PreDestroy
     fun shutdown() {
+        dispatchScheduler.close()
         paymentExecutor.shutdown()
     }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
+        val providerMean = deadline - paymentService.latestStart(deadline)
+        val waitBudget = deadline - createdAt - 2 * providerMean - 200
+        val dispatchDelayAllowance = waitBudget.coerceAtLeast(0) / 20
+        val maxWait = waitBudget - dispatchDelayAllowance
         val task = PaymentTask(amount, paymentService.latestStart(deadline), sequence.incrementAndGet()) {
             try {
                 val createdEvent = paymentESService.create {
@@ -76,11 +98,9 @@ class OrderPayer(
                 logger.error("Payment task failed for payment $paymentId", e)
             }
         }
-        try {
-            paymentExecutor.execute(task)
-        } catch (e: RejectedExecutionException) {
-            meterRegistry.counter("payment.admission.rejected").increment()
-            throw e
+        if (!dispatchScheduler.submit(maxWait, 2 * providerMean, task)) {
+            meterRegistry.counter("payment.admission.limited").increment()
+            throw RejectedExecutionException("Payment cannot be dispatched within its deadline")
         }
         return createdAt
     }
