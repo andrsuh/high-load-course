@@ -32,12 +32,22 @@ class OrderPayer(meterRegistry: MeterRegistry) {
     private val incomingPayments = meterRegistry.counter("shop.payments", "stage", "incoming")
     private val rejectedPayments = meterRegistry.counter("shop.payments", "stage", "rejected")
 
+    /**
+     * Пул на отправку платежей.
+     *
+     * Тест 3 подаёт нагрузку пачками: генератор выпускает около 200 итераций раз в runits = 90 с.
+     * Каждая итерация должна получить ответ `200` быстро (иначе её отменяют на следующей границе
+     * пачки), а размазывание по лимиту аккаунта (11 rps) идёт уже внутри приложения — поток
+     * держит слот `Semaphore(64)` и ждёт разрешения выходного окна. Поэтому размер пула должен
+     * вмещать целую пачку: 256 потоков + 64 в очереди.
+     * Прежние 48/32 на пачке отдавали `429` от переполнения очереди, а 140/70 — тоже не хватало.
+     */
     private val paymentExecutor = ThreadPoolExecutor(
-        140,
-        140,
+        256,
+        256,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(70),
+        LinkedBlockingQueue(64),
         NamedThreadFactory("payment-submission-executor"),
         RejectedExecutionHandler { _, _ ->
             rejectedPayments.increment()
@@ -47,7 +57,7 @@ class OrderPayer(meterRegistry: MeterRegistry) {
     ).also { ExecutorServiceMetrics(it, "payment-submission-executor", emptyList()).bindTo(meterRegistry) }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
-        val createdAt = System.currentTimeMillis()
+        val acceptedAt = System.currentTimeMillis()
         incomingPayments.increment()
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
@@ -59,8 +69,11 @@ class OrderPayer(meterRegistry: MeterRegistry) {
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            // The external budget starts when the worker is ready to submit,
+            // not when the request was waiting in the local executor queue.
+            val submissionStartedAt = System.currentTimeMillis()
+            paymentService.submitPaymentRequest(paymentId, amount, submissionStartedAt, deadline)
         }
-        return createdAt
+        return acceptedAt
     }
 }

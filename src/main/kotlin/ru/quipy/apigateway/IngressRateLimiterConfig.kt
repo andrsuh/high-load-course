@@ -31,32 +31,56 @@ class IngressRateLimiterConfig {
     @Value("\${ingress.rate-limiter.bucket-size}")
     var bucketSize: Int = 0
 
+    @Value("\${ingress.rate-limiter.long-bucket-size:256}")
+    var longBucketSize: Int = 256
+
     @Value("\${ingress.rate-limiter.burst-capacity}")
     var burstCapacity: Int = 0
 
+    /**
+     * Два лимитера с ОДНИМ темпом (`rate`) и разными резервуарами: дедлайн запроса выбирает,
+     * какой из них спросить (см. [IngressRateLimiter.tryAcquire]).
+     *
+     * Темп один намеренно: он задаёт запас относительно выходного лимита
+     * аккаунта (11 rps). Вход держим на 1 rps ниже, чтобы очередь перед лимитером аккаунта
+     * оставалась пустой и ожидание не съедало терпение клиента (см. комментарий у
+     * `ingress.rate-limiter.rate`). Различаются только резервуары, потому что профили
+     * принципиально разные:
+     *   - короткий дедлайн (тест 1: 2.5 с, тест 2: 13 с) — ровный поток с волнами повторов
+     *     после Retry-After, хватает `bucket-size` = 11;
+     *   - длинный дедлайн (тест 3: 26 с) — пачки по 240–270 запросов раз в runits = 90 с,
+     *     нужен `long-bucket-size` ≥ размера пачки.
+     *
+     */
     @Bean
     fun ingressRateLimiter(meterRegistry: MeterRegistry): IngressRateLimiter {
         if (!ingressRateLimiterEnabled) {
             logger.warn("Ingress rate limiter is disabled: all incoming payment requests are admitted")
-            return IngressRateLimiter(null, meterRegistry)
+            return IngressRateLimiter(shortDeadlineDelegate = null, meterRegistry = meterRegistry)
         }
 
-        val limiter = createLimiter()
+        val shortLimiter = createLimiter(bucketSize)
+        val longLimiter = createLimiter(longBucketSize)
         logger.warn(
-            "Ingress rate limiter enabled: type={}, rate={}, window={}s, burst={}, bucket={}",
-            rateLimiterType, rate, windowSeconds, burstCapacity, bucketSize
+            "Ingress rate limiter enabled: type={}, rate={}, window={}s, " +
+                "bucket(short deadline)={}, bucket(long deadline)={}",
+            rateLimiterType, rate, windowSeconds, bucketSize, longBucketSize
         )
-        return IngressRateLimiter(limiter, meterRegistry)
+        return IngressRateLimiter(
+            shortDeadlineDelegate = shortLimiter,
+            longDeadlineDelegate = longLimiter,
+            meterRegistry = meterRegistry,
+        )
     }
 
-    private fun createLimiter(): RateLimiter = when (rateLimiterType) {
+    private fun createLimiter(configuredBucketSize: Int): RateLimiter = when (rateLimiterType) {
         "sliding" -> SlidingWindowRateLimiter(rate.toLong(), Duration.ofSeconds(windowSeconds))
 
         "fixed" -> FixedWindowRateLimiter(rate, windowSeconds, TimeUnit.SECONDS)
 
-        "token-bucket" -> TokenBucketRateLimiter(rate, burstCapacity, windowSeconds, TimeUnit.SECONDS)
+        "token-bucket" -> TokenBucketRateLimiter(rate, maxOf(burstCapacity, configuredBucketSize), windowSeconds, TimeUnit.SECONDS)
 
-        "leaking-bucket" -> LeakingBucketRateLimiter(rate.toLong(), Duration.ofSeconds(windowSeconds), bucketSize)
+        "leaking-bucket" -> LeakingBucketRateLimiter(rate.toLong(), Duration.ofSeconds(windowSeconds), configuredBucketSize)
 
         "counting" -> CountingRateLimiter(rate, windowSeconds, TimeUnit.SECONDS)
 

@@ -28,8 +28,11 @@ class APIController {
     @Autowired
     private lateinit var ingressRateLimiter: IngressRateLimiter
 
-    @Value($$"${ingress.retry-after-ms}")
+    @Value("\${ingress.retry-after-ms}")
     private var retryAfterMs: Long = 0L
+
+    @Value("\${ingress.wait-ms:300}")
+    private var ingressWaitMs: Long = 300L
 
     @PostConstruct
     fun logRetryAfterConfiguration() {
@@ -83,7 +86,12 @@ class APIController {
             return tooManyRequests()
         }
 
-        if (!ingressRateLimiter.tryAcquire(INGRESS_WAIT_MAX_MS)) {
+        // «Длинный» дедлайн (тест 3, 26 с) означает пачечную нагрузку: ~200 запросов раз в
+        // runits = 90 с. Для неё нужен бакет, вмещающий пачку целиком, иначе клиент получает
+        // 429, пересоздаёт заказ и тест не набирает объём. Для коротких тестов бакет малый:
+        // он гасит только волны повторов после Retry-After.
+        val longDeadline = remainingMs >= LONG_DEADLINE_THRESHOLD_MS
+        if (!ingressRateLimiter.tryAcquire(ingressWaitMs, longDeadline)) {
             logger.warn("Payment for order $orderId rejected by ingress rate limiter")
             return tooManyRequests()
         }
@@ -104,8 +112,26 @@ class APIController {
     )
 
     companion object {
+        /**
+         * Минимальный остаток клиентского бюджета, при котором запрос ещё принимается.
+         * Ниже этого порога платеж гарантированно не успеет, и тратить на него разрешение
+         * лимитера и слот пула бессмысленно.
+         */
         private const val MIN_REMAINING_BUDGET_MS = 300L
-        private const val INGRESS_WAIT_MAX_MS = 300L
+
+        /**
+         * Граница «длинного» дедлайна — 20 с.
+         *
+         * Дедлайны тестов: 2.5 с, 13 с, 26 с. Пачечный профиль (пачки по 240–270 запросов
+         * раз в runits = 90 с) есть только у третьего теста, поэтому граница должна стоять
+         * между 13 с и 26 с. При прежней границе в 5 с второй тест попадал в «длинный»
+         * резервуар с бакетом 320 и получал право на залп в 320 запросов: лимитер пропускал
+         * весь вход (rejected = 0 при входе 11.6 rps против темпа 10 rps), а выходное окно
+         * аккаунта держит только 11 rps — очередь росла до 13 с, и клиент потерял 216 платежей из 2200 по таймауту (90 % успеха).
+         * У второго теста профиль ровный, ему достаточно бакета 11 и темпа 10 rps,
+         * а излишек он получает как 429 и повторяет.
+         */
+        private const val LONG_DEADLINE_THRESHOLD_MS = 20_000L
     }
 
     @ExceptionHandler(RejectedExecutionException::class)

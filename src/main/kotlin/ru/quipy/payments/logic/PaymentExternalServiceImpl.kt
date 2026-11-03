@@ -37,13 +37,33 @@ class PaymentExternalSystemAdapterImpl(
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
 
-        private const val RATE_WAIT_MAX_MS = 500L
-
         /** Шаг опроса лимитера. */
         private const val RATE_WAIT_STEP_MS = 5L
 
+        /**
+         * Резерв бюджета, который нельзя отдавать под ожидание окна: запись результата
+         * в event store и доставка ответа клиенту после ответа платёжной системы.
+         */
+        private const val SUBMISSION_RESERVE_MS = 300L
+
+        /**
+         * Страховочный потолок ожидания окна — защита от некорректного дедлайна от клиента.
+         * Рабочее ограничение вычисляется из дедлайна, см. [awaitRatePermission].
+         */
+        private const val RATE_WAIT_CEILING_MS = 30_000L
+
         /** Минимальный бюджет ожидания слота: лучше отправить запрос с малым запасом, чем гарантированно провалить его. */
         private const val MIN_WAIT_BUDGET_MS = 50L
+
+        /**
+         * Максимальное ожидание слота параллелизма.
+         *
+         * Слотов столько же, сколько параллельных запросов у аккаунта (64), а каждый вызов
+         * держит слот ~1.2 с. Пачка в 200 платежей поэтому ждёт слот до ~3 с: занижать до
+         * полусекунды нельзя, иначе на пачке платежи отбрасываются с причиной `slot`
+         * (в прогоне test-3-fixed-2 так потеряно 38 платежей из 116 принятых).
+         */
+        private const val SLOT_WAIT_MAX_MS = 5_000L
 
         /** Вес предыдущей оценки в экспоненциальном сглаживании. */
         private const val EWMA_PREVIOUS_WEIGHT = 4L
@@ -54,13 +74,10 @@ class PaymentExternalSystemAdapterImpl(
          */
         private const val DISPATCHER_MAX_REQUESTS = 512
         private const val DISPATCHER_MAX_REQUESTS_PER_HOST = 256
-        private const val EGRESS_RATE_HEADROOM = 1
-        private const val EGRESS_BUCKET_SIZE = 1
     }
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
-    private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
@@ -109,8 +126,24 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
+    /**
+     * Ожидание разрешения выходного окна, ограниченное самим дедлайном.
+     *
+     * Дедлайн приходит от клиента (`processingTimeMillis`) и означает его терпение:
+     * тест 1 — 2.5 с, тест 2 — 13 с, тест 3 — 26 с. В тесте 3 пачка приходит целиком
+     * (~262 заказа раз в runits = 90 с), поэтому её хвост при 11 rps занимает
+     * 262 / 11 ≈ 23.8 с. Жёсткий потолок в 20 с обрезал именно хвост и превращал его
+     * в `payment_dropped_total{reason="rate_wait"}`, а клиент показывал CLIENT_TIMEOUT
+     *
+     * Поэтому ждём не «константу», а остаток дедлайна за вычетом времени на сам платёж
+     * ([observedProcessingMs]) и на запись результата ([SUBMISSION_RESERVE_MS]).
+     * Если ожидание за это время не сложилось — платёж отбрасывается с причиной
+     * `rate_wait`, и это видно в `payment_dropped_total`.
+     */
     private fun awaitRatePermission(budgetMs: Long): Boolean {
-        val waitDeadline = now() + minOf(budgetMs.coerceAtLeast(0L), RATE_WAIT_MAX_MS)
+        val reserveMs = observedProcessingMs.get() + SUBMISSION_RESERVE_MS
+        val maxWaitMs = (budgetMs - reserveMs).coerceIn(0L, RATE_WAIT_CEILING_MS)
+        val waitDeadline = now() + maxWaitMs
         while (true) {
             if (rateLimiter.tick()) return true
             if (now() >= waitDeadline) return false
@@ -142,18 +175,24 @@ class PaymentExternalSystemAdapterImpl(
             return
         }
 
-        val waitBudgetMs = maxOf(MIN_WAIT_BUDGET_MS, budgetMs - observedProcessingMs.get())
+        // Acquire the egress permission first. Waiting for the rate window
+        // must not occupy one of the 64 provider concurrency slots.
+        if (!awaitRatePermission(budgetMs)) {
+            dropPayment(paymentId, transactionId, rateWaitDrops, "Rate limit wait exceeded, request not sent")
+            return
+        }
+
+        // Ожидание слота ограничено константой, а не остатком дедлайна: при дедлайне 26 с
+        // формула budget - observed давала до 24.5 с на поток, из-за чего пул заполнялся
+        // ожидающими и клиент получал 429 от RejectedExecutionHandler.
+        val waitBudgetMs = minOf(deadline - now() - observedProcessingMs.get(), SLOT_WAIT_MAX_MS)
+            .coerceAtLeast(MIN_WAIT_BUDGET_MS)
         if (!parallelLimiter.tryAcquire(waitBudgetMs, TimeUnit.MILLISECONDS)) {
             dropPayment(paymentId, transactionId, slotDrops, "Deadline would be missed, request not sent")
             return
         }
 
         try {
-            if (!awaitRatePermission(budgetMs)) {
-                dropPayment(paymentId, transactionId, rateWaitDrops, "Rate limit wait exceeded, request not sent")
-                return
-            }
-
             val sentAt = now()
 
             val request = Request.Builder().run {

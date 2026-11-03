@@ -70,8 +70,20 @@ class EventSourcingLibConfiguration {
     fun jettyServerCustomizer(): JettyServletWebServerFactory {
         val jettyServletWebServerFactory = JettyServletWebServerFactory()
 
-        val c = JettyServerCustomizer {
-            (it.connectors[0].getConnectionFactory("h2c") as HTTP2CServerConnectionFactory).maxConcurrentStreams = 10_000_000
+        val c = JettyServerCustomizer { server ->
+            // Фабрика h2c существует только при server.http2.enabled=true. При отключённом HTTP/2
+            // её нет, и жёсткое приведение роняло старт приложения с NullPointerException
+            val http2Factory = server.connectors.firstOrNull()
+                ?.getConnectionFactory("h2c") as? HTTP2CServerConnectionFactory
+
+            if (http2Factory != null) {
+                http2Factory.maxConcurrentStreams = 10_000_000
+            } else {
+                logger.warn(
+                    "h2c connection factory is absent (server.http2.enabled=false): " +
+                        "maxConcurrentStreams is left at its default value"
+                )
+            }
         }
 
         jettyServletWebServerFactory.serverCustomizers.add(c)
