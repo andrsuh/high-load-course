@@ -59,9 +59,7 @@ class PaymentExternalSystemAdapterImpl(
          * Максимальное ожидание слота параллелизма.
          *
          * Слотов столько же, сколько параллельных запросов у аккаунта (64), а каждый вызов
-         * держит слот ~1.2 с. Пачка в 200 платежей поэтому ждёт слот до ~3 с: занижать до
-         * полусекунды нельзя, иначе на пачке платежи отбрасываются с причиной `slot`
-         * (в прогоне test-3-fixed-2 так потеряно 38 платежей из 116 принятых).
+         * держит слот ~1.2 с.
          */
         private const val SLOT_WAIT_MAX_MS = 5_000L
 
@@ -69,7 +67,7 @@ class PaymentExternalSystemAdapterImpl(
         private const val EWMA_PREVIOUS_WEIGHT = 4L
 
         /**
-         * Пределы диспетчера OkHttp. Подняты выше дефолтных (64 / 5), чтобы обеспечить
+         * Пределы диспетчера OkHttp. Подняты, чтобы обеспечить
          * in-flight, необходимый для полной утилизации: 11 rps × 13 с = 143 запроса.
          */
         private const val DISPATCHER_MAX_REQUESTS = 512
@@ -128,17 +126,6 @@ class PaymentExternalSystemAdapterImpl(
 
     /**
      * Ожидание разрешения выходного окна, ограниченное самим дедлайном.
-     *
-     * Дедлайн приходит от клиента (`processingTimeMillis`) и означает его терпение:
-     * тест 1 — 2.5 с, тест 2 — 13 с, тест 3 — 26 с. В тесте 3 пачка приходит целиком
-     * (~262 заказа раз в runits = 90 с), поэтому её хвост при 11 rps занимает
-     * 262 / 11 ≈ 23.8 с. Жёсткий потолок в 20 с обрезал именно хвост и превращал его
-     * в `payment_dropped_total{reason="rate_wait"}`, а клиент показывал CLIENT_TIMEOUT
-     *
-     * Поэтому ждём не «константу», а остаток дедлайна за вычетом времени на сам платёж
-     * ([observedProcessingMs]) и на запись результата ([SUBMISSION_RESERVE_MS]).
-     * Если ожидание за это время не сложилось — платёж отбрасывается с причиной
-     * `rate_wait`, и это видно в `payment_dropped_total`.
      */
     private fun awaitRatePermission(budgetMs: Long): Boolean {
         val reserveMs = observedProcessingMs.get() + SUBMISSION_RESERVE_MS
