@@ -32,16 +32,6 @@ class OrderPayer(meterRegistry: MeterRegistry) {
     private val incomingPayments = meterRegistry.counter("shop.payments", "stage", "incoming")
     private val rejectedPayments = meterRegistry.counter("shop.payments", "stage", "rejected")
 
-    /**
-     * Пул на отправку платежей.
-     *
-     * Тест 3 подаёт нагрузку пачками: генератор выпускает около 200 итераций раз в runits = 90 с.
-     * Каждая итерация должна получить ответ `200` быстро (иначе её отменяют на следующей границе
-     * пачки), а размазывание по лимиту аккаунта (11 rps) идёт уже внутри приложения — поток
-     * держит слот `Semaphore(64)` и ждёт разрешения выходного окна. Поэтому размер пула должен
-     * вмещать целую пачку: 256 потоков + 64 в очереди.
-     * Прежние 48/32 на пачке отдавали `429` от переполнения очереди, а 140/70 — тоже не хватало.
-     */
     private val paymentExecutor = ThreadPoolExecutor(
         256,
         256,

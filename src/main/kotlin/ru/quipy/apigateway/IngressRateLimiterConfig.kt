@@ -37,21 +37,6 @@ class IngressRateLimiterConfig {
     @Value("\${ingress.rate-limiter.burst-capacity}")
     var burstCapacity: Int = 0
 
-    /**
-     * Два лимитера с ОДНИМ темпом (`rate`) и разными резервуарами: дедлайн запроса выбирает,
-     * какой из них спросить (см. [IngressRateLimiter.tryAcquire]).
-     *
-     * Темп один намеренно: он задаёт запас относительно выходного лимита
-     * аккаунта (11 rps). Вход держим на 1 rps ниже, чтобы очередь перед лимитером аккаунта
-     * оставалась пустой и ожидание не съедало терпение клиента (см. комментарий у
-     * `ingress.rate-limiter.rate`). Различаются только резервуары, потому что профили
-     * принципиально разные:
-     *   - короткий дедлайн (тест 1: 2.5 с, тест 2: 13 с) — ровный поток с волнами повторов
-     *     после Retry-After, хватает `bucket-size` = 11;
-     *   - длинный дедлайн (тест 3: 26 с) — пачки по 240–270 запросов раз в runits = 90 с,
-     *     нужен `long-bucket-size` ≥ размера пачки.
-     *
-     */
     @Bean
     fun ingressRateLimiter(meterRegistry: MeterRegistry): IngressRateLimiter {
         if (!ingressRateLimiterEnabled) {
