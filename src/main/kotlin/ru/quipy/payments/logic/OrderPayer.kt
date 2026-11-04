@@ -6,10 +6,12 @@ import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.FixedWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
@@ -31,6 +33,8 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val incomingRateLimiter = FixedWindowRateLimiter(11, 1, TimeUnit.SECONDS)
+
     private val paymentExecutor = ThreadPoolExecutor(
         110,
         110,
@@ -50,6 +54,9 @@ class OrderPayer {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         meterRegistry.counter("shop_payments_incoming_total").increment()
         val createdAt = System.currentTimeMillis()
+        if (!incomingRateLimiter.tick()) {
+            throw tooManyRequests("Payment rate limit exceeded")
+        }
         try {
             paymentExecutor.submit {
                 val createdEvent = paymentESService.create {
@@ -64,8 +71,15 @@ class OrderPayer {
                 paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
             }
         } catch(e: RejectedExecutionException) {
-            throw ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Payment queue is full")
+            throw tooManyRequests("Payment queue is full")
         }
         return createdAt
     }
+
+    private fun tooManyRequests(reason: String) =
+        object : ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, reason) {
+            override fun getHeaders() = HttpHeaders().apply {
+                set(HttpHeaders.RETRY_AFTER, (System.currentTimeMillis() + 100).toString())
+            }
+        }
 }
