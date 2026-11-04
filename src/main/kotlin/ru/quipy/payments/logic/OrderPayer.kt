@@ -1,7 +1,5 @@
 package ru.quipy.payments.logic
 
-import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -17,7 +15,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @Service
-class OrderPayer(meterRegistry: MeterRegistry) {
+class OrderPayer {
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -29,9 +27,6 @@ class OrderPayer(meterRegistry: MeterRegistry) {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val incomingPayments = meterRegistry.counter("shop.payments", "stage", "incoming")
-    private val rejectedPayments = meterRegistry.counter("shop.payments", "stage", "rejected")
-
     private val paymentExecutor = ThreadPoolExecutor(
         256,
         256,
@@ -40,15 +35,13 @@ class OrderPayer(meterRegistry: MeterRegistry) {
         LinkedBlockingQueue(64),
         NamedThreadFactory("payment-submission-executor"),
         RejectedExecutionHandler { _, _ ->
-            rejectedPayments.increment()
             logger.warn("Payment rejected: payment queue is full")
             throw RejectedExecutionException("Payment queue is full")
         }
-    ).also { ExecutorServiceMetrics(it, "payment-submission-executor", emptyList()).bindTo(meterRegistry) }
+    )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val acceptedAt = System.currentTimeMillis()
-        incomingPayments.increment()
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(

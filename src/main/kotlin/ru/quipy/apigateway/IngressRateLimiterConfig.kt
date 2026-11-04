@@ -1,6 +1,5 @@
 package ru.quipy.apigateway
 
-import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
@@ -38,10 +37,10 @@ class IngressRateLimiterConfig {
     var burstCapacity: Int = 0
 
     @Bean
-    fun ingressRateLimiter(meterRegistry: MeterRegistry): IngressRateLimiter {
+    fun ingressRateLimiter(): IngressRateLimiter {
         if (!ingressRateLimiterEnabled) {
             logger.warn("Ingress rate limiter is disabled: all incoming payment requests are admitted")
-            return IngressRateLimiter(shortDeadlineDelegate = null, meterRegistry = meterRegistry)
+            return IngressRateLimiter(shortDeadlineDelegate = null)
         }
 
         val shortLimiter = createLimiter(bucketSize)
@@ -54,7 +53,6 @@ class IngressRateLimiterConfig {
         return IngressRateLimiter(
             shortDeadlineDelegate = shortLimiter,
             longDeadlineDelegate = longLimiter,
-            meterRegistry = meterRegistry,
         )
     }
 

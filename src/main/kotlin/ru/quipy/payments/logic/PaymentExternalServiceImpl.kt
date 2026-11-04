@@ -2,10 +2,6 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import io.micrometer.core.instrument.Counter
-import io.micrometer.core.instrument.MeterRegistry
-import okhttp3.ConnectionPool
-import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -21,13 +17,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 
-// Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-    meterRegistry: MeterRegistry,
     private val expectedProcessingTimeMs: Long = 0L,
 ) : PaymentExternalSystemAdapter {
 
@@ -79,19 +73,7 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(Duration.ofSeconds(2))
-        .writeTimeout(Duration.ofSeconds(10))
-        .readTimeout(Duration.ofSeconds(60))
-        .callTimeout(Duration.ofSeconds(90))
-        .dispatcher(
-            Dispatcher().apply {
-                maxRequests = DISPATCHER_MAX_REQUESTS
-                maxRequestsPerHost = DISPATCHER_MAX_REQUESTS_PER_HOST
-            }
-        )
-        .connectionPool(ConnectionPool(DISPATCHER_MAX_REQUESTS_PER_HOST, 5L, TimeUnit.MINUTES))
-        .build()
+    private val client = OkHttpClient.Builder().build()
 
     private val rateLimiter = SlidingWindowRateLimiter(
         rateLimitPerSec.toLong(),
@@ -99,10 +81,6 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     private val parallelLimiter = Semaphore(parallelRequests, true)
-
-    private val deadlineDrops: Counter = meterRegistry.counter("payment_dropped_total", "reason", "deadline")
-    private val slotDrops: Counter = meterRegistry.counter("payment_dropped_total", "reason", "slot")
-    private val rateWaitDrops: Counter = meterRegistry.counter("payment_dropped_total", "reason", "rate_wait")
 
     private val observedProcessingMs = AtomicLong(initialProcessingEstimate())
 
@@ -140,12 +118,11 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
-
-        val transactionId = UUID.randomUUID()
+val transactionId = UUID.randomUUID()
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
+paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
@@ -156,7 +133,6 @@ class PaymentExternalSystemAdapterImpl(
             dropPayment(
                 paymentId,
                 transactionId,
-                deadlineDrops,
                 "Deadline exceeded before submission, request not sent"
             )
             return
@@ -165,7 +141,7 @@ class PaymentExternalSystemAdapterImpl(
         // Acquire the egress permission first. Waiting for the rate window
         // must not occupy one of the 64 provider concurrency slots.
         if (!awaitRatePermission(budgetMs)) {
-            dropPayment(paymentId, transactionId, rateWaitDrops, "Rate limit wait exceeded, request not sent")
+            dropPayment(paymentId, transactionId, "Rate limit wait exceeded, request not sent")
             return
         }
 
@@ -175,7 +151,7 @@ class PaymentExternalSystemAdapterImpl(
         val waitBudgetMs = minOf(deadline - now() - observedProcessingMs.get(), SLOT_WAIT_MAX_MS)
             .coerceAtLeast(MIN_WAIT_BUDGET_MS)
         if (!parallelLimiter.tryAcquire(waitBudgetMs, TimeUnit.MILLISECONDS)) {
-            dropPayment(paymentId, transactionId, slotDrops, "Deadline would be missed, request not sent")
+            dropPayment(paymentId, transactionId, "Deadline would be missed, request not sent")
             return
         }
 
@@ -227,8 +203,7 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    private fun dropPayment(paymentId: UUID, transactionId: UUID, counter: Counter, reason: String) {
-        counter.increment()
+    private fun dropPayment(paymentId: UUID, transactionId: UUID, reason: String) {
         logger.error("[$accountName] Payment $paymentId dropped: $reason, txId: $transactionId")
         paymentESService.update(paymentId) {
             it.logProcessing(false, now(), transactionId, reason = reason)
