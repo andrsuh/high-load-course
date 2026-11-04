@@ -9,9 +9,9 @@ import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 
 class SlidingWindowRateLimiter(
     private val rate: Long,
@@ -21,6 +21,7 @@ class SlidingWindowRateLimiter(
 
     private val sum = AtomicLong(0)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
+    private val blockingLock = ReentrantLock(true)
 
     override fun tick(): Boolean {
         while (true) {
@@ -36,6 +37,20 @@ class SlidingWindowRateLimiter(
     fun tickBlocking() {
         while (!tick()) {
             Thread.sleep(10)
+        }
+    }
+
+    fun tickBlocking(deadlineMillis: Long): Boolean {
+        val remainingMillis = maxOf(0, deadlineMillis - System.currentTimeMillis())
+        if (!blockingLock.tryLock(remainingMillis, TimeUnit.MILLISECONDS)) return false
+        try {
+            while (System.currentTimeMillis() <= deadlineMillis) {
+                if (tick()) return true
+                Thread.sleep(1)
+            }
+            return false
+        } finally {
+            blockingLock.unlock()
         }
     }
 

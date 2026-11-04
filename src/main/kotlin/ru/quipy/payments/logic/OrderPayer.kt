@@ -6,6 +6,7 @@ import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
@@ -64,8 +65,15 @@ class OrderPayer {
                 paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
             }
         } catch(e: RejectedExecutionException) {
-            throw ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Payment queue is full")
+            throw tooManyRequests("Payment queue is full")
         }
         return createdAt
     }
+
+    private fun tooManyRequests(reason: String) =
+        object : ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, reason) {
+            override fun getHeaders() = HttpHeaders().apply {
+                set(HttpHeaders.RETRY_AFTER, (System.currentTimeMillis() + 100).toString())
+            }
+        }
 }

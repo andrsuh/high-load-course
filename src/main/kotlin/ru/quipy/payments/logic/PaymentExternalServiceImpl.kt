@@ -35,34 +35,33 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
-    private val rateLimiter = SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong()-2, window = Duration.ofSeconds(1))
+    private val processingReserveMillis = requestAverageProcessingTime.toMillis() * 2 + 100
+    private val processingTimeOneCall = (1_000L + rateLimitPerSec - 1) / rateLimitPerSec
+    private val rateLimiter = SlidingWindowRateLimiter(rate = 1, window = Duration.ofMillis(processingTimeOneCall))
     // Ограничитель количества параллельных запросов к внешнему платежному движку
-    private val inFlightRequests = Semaphore(parallelRequests)
+    private val inFlightRequests = Semaphore(parallelRequests, true)
 
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         inFlightRequests.acquire()
         try {
-            if ((deadline - now()) < requestAverageProcessingTime.toMillis() * 2) {
+            if (!rateLimiter.tickBlocking(deadlineMillis = deadline - processingReserveMillis)) {
                 paymentESService.update(paymentId) {
                     it.logProcessing(success = false, processedAt = now(), reason = "Deadline unreachable")
                 }
                 return
             }
-            performPayment(paymentId, amount, paymentStartedAt)
+            performPayment(paymentId, amount, paymentStartedAt, deadline)
         } finally {
             inFlightRequests.release()
         }
     }
 
-    private fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
+    private fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
-
-        // ожидания разрешения от sliding window на новый запрос
-        rateLimiter.tickBlocking()
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -77,6 +76,13 @@ class PaymentExternalSystemAdapterImpl(
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
             }.build()
+
+            if (deadline - now() < processingReserveMillis) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Deadline unreachable")
+                }
+                return
+            }
 
             client.newCall(request).execute().use { response ->
                 val body = try {
