@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
@@ -32,12 +33,19 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val incomingRateLimiter = TokenBucketRateLimiter(
+        rate = 11,
+        bucketMaxCapacity = 220,
+        window = 1,
+        timeUnit = TimeUnit.SECONDS,
+    )
+
     private val paymentExecutor = ThreadPoolExecutor(
         110,
         110,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(100),
+        LinkedBlockingQueue(200),
         NamedThreadFactory("payment-submission-executor"),
         ThreadPoolExecutor.AbortPolicy()
     )
@@ -51,6 +59,9 @@ class OrderPayer {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         meterRegistry.counter("shop_payments_incoming_total").increment()
         val createdAt = System.currentTimeMillis()
+        if (!incomingRateLimiter.tick()) {
+            throw tooManyRequests("Payment rate limit exceeded")
+        }
         try {
             paymentExecutor.submit {
                 val createdEvent = paymentESService.create {

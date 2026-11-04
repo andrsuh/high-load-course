@@ -13,6 +13,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.Semaphore
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import kotlin.math.ceil
 
 
 // Advice: always treat time as a Duration
@@ -36,8 +37,9 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
     private val processingReserveMillis = requestAverageProcessingTime.toMillis() * 2 + 100
-    private val processingTimeOneCall = (1_000L + rateLimitPerSec - 1) / rateLimitPerSec
-    private val rateLimiter = SlidingWindowRateLimiter(rate = 1, window = Duration.ofMillis(processingTimeOneCall))
+    private val requestIntervalMillis = ceil(1_000.0 / rateLimitPerSec).toLong()
+    private val submissionRateLimiter = SlidingWindowRateLimiter(rate = 1, window = Duration.ofMillis(requestIntervalMillis))
+    private val providerRateLimiter = SlidingWindowRateLimiter(rate = 1, window = Duration.ofMillis(requestIntervalMillis))
     // Ограничитель количества параллельных запросов к внешнему платежному движку
     private val inFlightRequests = Semaphore(parallelRequests, true)
 
@@ -46,7 +48,7 @@ class PaymentExternalSystemAdapterImpl(
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         inFlightRequests.acquire()
         try {
-            if (!rateLimiter.tickBlocking(deadlineMillis = deadline - processingReserveMillis)) {
+            if (!submissionRateLimiter.tickBlocking(deadlineMillis = deadline - processingReserveMillis)) {
                 paymentESService.update(paymentId) {
                     it.logProcessing(success = false, processedAt = now(), reason = "Deadline unreachable")
                 }
@@ -77,14 +79,15 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            if (deadline - now() < processingReserveMillis) {
+            val call = client.newCall(request)
+            if (!providerRateLimiter.tickBlocking(deadlineMillis = deadline - processingReserveMillis)) {
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Deadline unreachable")
                 }
                 return
             }
 
-            client.newCall(request).execute().use { response ->
+            call.execute().use { response ->
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {

@@ -22,7 +22,7 @@ class TokenBucketRateLimiter(
 
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
-    private var bucket: AtomicInteger = AtomicInteger(0)
+    private var bucket: AtomicInteger = AtomicInteger(bucketMaxCapacity)
     private var start = System.currentTimeMillis()
     private var nextExpectedWakeUp = start + timeUnit.toMillis(window)
 
