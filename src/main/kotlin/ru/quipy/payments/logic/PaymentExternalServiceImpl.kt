@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -22,6 +24,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    meterRegistry: MeterRegistry,
     private val expectedProcessingTimeMs: Long = 0L,
 ) : PaymentExternalSystemAdapter {
 
@@ -82,6 +85,10 @@ class PaymentExternalSystemAdapterImpl(
 
     private val parallelLimiter = Semaphore(parallelRequests, true)
 
+    private val deadlineDrops = meterRegistry.counter("payment_dropped_total", "reason", "deadline")
+    private val slotDrops = meterRegistry.counter("payment_dropped_total", "reason", "slot")
+    private val rateWaitDrops = meterRegistry.counter("payment_dropped_total", "reason", "rate_wait")
+
     private val observedProcessingMs = AtomicLong(initialProcessingEstimate())
 
     private fun initialProcessingEstimate(): Long {
@@ -133,6 +140,7 @@ paymentESService.update(paymentId) {
             dropPayment(
                 paymentId,
                 transactionId,
+                deadlineDrops,
                 "Deadline exceeded before submission, request not sent"
             )
             return
@@ -141,7 +149,7 @@ paymentESService.update(paymentId) {
         // Acquire the egress permission first. Waiting for the rate window
         // must not occupy one of the 64 provider concurrency slots.
         if (!awaitRatePermission(budgetMs)) {
-            dropPayment(paymentId, transactionId, "Rate limit wait exceeded, request not sent")
+            dropPayment(paymentId, transactionId, rateWaitDrops, "Rate limit wait exceeded, request not sent")
             return
         }
 
@@ -151,7 +159,7 @@ paymentESService.update(paymentId) {
         val waitBudgetMs = minOf(deadline - now() - observedProcessingMs.get(), SLOT_WAIT_MAX_MS)
             .coerceAtLeast(MIN_WAIT_BUDGET_MS)
         if (!parallelLimiter.tryAcquire(waitBudgetMs, TimeUnit.MILLISECONDS)) {
-            dropPayment(paymentId, transactionId, "Deadline would be missed, request not sent")
+            dropPayment(paymentId, transactionId, slotDrops, "Deadline would be missed, request not sent")
             return
         }
 
@@ -203,7 +211,8 @@ paymentESService.update(paymentId) {
         }
     }
 
-    private fun dropPayment(paymentId: UUID, transactionId: UUID, reason: String) {
+    private fun dropPayment(paymentId: UUID, transactionId: UUID, counter: Counter, reason: String) {
+        counter.increment()
         logger.error("[$accountName] Payment $paymentId dropped: $reason, txId: $transactionId")
         paymentESService.update(paymentId) {
             it.logProcessing(false, now(), transactionId, reason = reason)
