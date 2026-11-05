@@ -27,7 +27,7 @@ class OrderPayer {
 
     private val paymentExecutor = ThreadPoolExecutor(
         128,
-        128,
+        256,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(32),
