@@ -3,10 +3,12 @@ package ru.quipy.apigateway
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.*
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.util.*
+import java.util.concurrent.RejectedExecutionException
 
 @RestController
 class APIController {
@@ -71,4 +73,8 @@ class APIController {
         val timestamp: Long,
         val transactionId: UUID
     )
+
+    @ExceptionHandler(RejectedExecutionException::class)
+    @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
+    fun paymentQueueFull() = mapOf("message" to "Payment queue is full; retry later")
 }
