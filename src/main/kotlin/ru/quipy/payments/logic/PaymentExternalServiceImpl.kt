@@ -169,7 +169,11 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    override fun parallelCapacity() = parallelRequests
+    override fun parallelCapacity(): Int = minOf(
+        parallelRequests.toLong(),
+        kotlin.math.ceil(rateLimitPerSec * requestAverageProcessingTime.toNanos() / 1_000_000_000.0)
+            .toLong() + 1L
+    ).coerceAtLeast(1L).toInt()
 
     override fun latestStart(deadline: Long) = deadline - requestAverageProcessingTime.toMillis()
 

@@ -4,7 +4,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
-import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import org.springframework.beans.factory.annotation.Value
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -15,11 +15,13 @@ import java.util.concurrent.atomic.AtomicLong
 import jakarta.annotation.PreDestroy
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.RejectedExecutionException
 
 @Service
 class OrderPayer(
     private val meterRegistry: io.micrometer.core.instrument.MeterRegistry,
     private val paymentService: PaymentService,
+    @Value("\${payment.queue.capacity:110}") queueCapacity: Int,
 ) {
 
     companion object {
@@ -35,12 +37,13 @@ class OrderPayer(
         paymentService.workerCount(),
         0L,
         TimeUnit.MILLISECONDS,
-        PaymentPriorityQueue(8_000),
+        PaymentPriorityQueue(queueCapacity),
         NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
+        ThreadPoolExecutor.AbortPolicy()
     )
 
     init {
+        paymentExecutor.prestartAllCoreThreads()
         io.micrometer.core.instrument.Gauge.builder("payment.queue.size", paymentExecutor) {
             it.queue.size.toDouble()
         }.register(meterRegistry)
@@ -56,7 +59,7 @@ class OrderPayer(
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        paymentExecutor.execute(PaymentTask(amount, paymentService.latestStart(deadline), sequence.incrementAndGet()) {
+        val task = PaymentTask(amount, paymentService.latestStart(deadline), sequence.incrementAndGet()) {
             try {
                 val createdEvent = paymentESService.create {
                     it.create(
@@ -72,7 +75,13 @@ class OrderPayer(
                 meterRegistry.counter("payment.dispatch.errors").increment()
                 logger.error("Payment task failed for payment $paymentId", e)
             }
-        })
+        }
+        try {
+            paymentExecutor.execute(task)
+        } catch (e: RejectedExecutionException) {
+            meterRegistry.counter("payment.admission.rejected").increment()
+            throw e
+        }
         return createdAt
     }
 }
