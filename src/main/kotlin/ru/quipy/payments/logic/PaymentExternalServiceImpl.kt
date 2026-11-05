@@ -37,13 +37,12 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val client = OkHttpClient.Builder().build()
-    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofMillis(1_020))
     private val ongoingWindow = OngoingWindow(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         ongoingWindow.acquire()
         try {
-            rateLimiter.tickBlocking()
             logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
             val transactionId = UUID.randomUUID()
@@ -62,7 +61,9 @@ class PaymentExternalSystemAdapterImpl(
                     post(emptyBody)
                 }.build()
 
-                client.newCall(request).execute().use { response ->
+                val call = client.newCall(request)
+                rateLimiter.tickBlocking()
+                call.execute().use { response ->
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
