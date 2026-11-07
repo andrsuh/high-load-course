@@ -9,7 +9,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
-import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.PacedRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -24,6 +24,8 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentProviderHostPort: String,
     private val token: String,
     private val meterRegistry: MeterRegistry,
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .retryOnConnectionFailure(false).readTimeout(Duration.ZERO).build(),
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -33,14 +35,15 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
     }
 
+    private class DispatchDeadlineExceeded : java.io.IOException("Payment dispatch deadline exceeded")
+
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().retryOnConnectionFailure(false).readTimeout(Duration.ZERO).build()
-    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val rateLimiter = PacedRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val ongoingWindow = OngoingWindow(parallelRequests)
 
     private val tags = arrayOf("service", serviceName, "account", accountName)
@@ -77,8 +80,7 @@ class PaymentExternalSystemAdapterImpl(
 
             val latestStart = latestStart(deadline)
             val acquired = try {
-                val rateAcquired = rateLimiter.tickBlocking(Duration.ofMillis(latestStart - now()))
-                windowAcquired = rateAcquired && ongoingWindow.acquire(Duration.ofMillis(latestStart - now()))
+                windowAcquired = ongoingWindow.acquire(Duration.ofMillis(latestStart - now()))
                 windowAcquired && now() < latestStart
                 } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -106,21 +108,18 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            if (now() >= latestStart) {
-                recordWait(paymentStartedAt, "discarded")
-                count("expired_before_send")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "There is no time for payment")
-                }
-                return
-            }
-
-            providerStarted = true
-            recordWait(paymentStartedAt, "sent")
-            val httpStarted = System.nanoTime()
-            inFlight.incrementAndGet()
+            var httpStarted: Long? = null
+            val dispatchClient = client.newBuilder().addNetworkInterceptor { chain ->
+                val rateAcquired = rateLimiter.tickBlocking(Duration.ofMillis(latestStart - now()))
+                if (!rateAcquired || now() >= latestStart) throw DispatchDeadlineExceeded()
+                recordWait(paymentStartedAt, "sent")
+                providerStarted = true
+                httpStarted = System.nanoTime()
+                inFlight.incrementAndGet()
+                chain.proceed(chain.request())
+            }.followRedirects(false).followSslRedirects(false).build()
             val body = try {
-                client.newCall(request).execute().use { response ->
+                dispatchClient.newCall(request).execute().use { response ->
                     // Consume the body once; malformed responses still release the slot.
                     val rawBody = response.body?.string()
                     try {
@@ -131,9 +130,12 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             } finally {
-                httpTimer.record(System.nanoTime() - httpStarted, java.util.concurrent.TimeUnit.NANOSECONDS)
-                inFlight.decrementAndGet()
+                httpStarted?.let { started ->
+                    httpTimer.record(System.nanoTime() - started, java.util.concurrent.TimeUnit.NANOSECONDS)
+                    inFlight.decrementAndGet()
+                }
             }
+            if (!body.result) logger.warn("[$accountName] Provider rejected payment $paymentId: ${body.message}")
             providerCompleted = true
             val processedAt = now()
 
@@ -149,6 +151,13 @@ class PaymentExternalSystemAdapterImpl(
         } catch (e: Exception) {
             if (providerStarted && !providerCompleted) count("provider_error_unknown")
             when (e) {
+                is DispatchDeadlineExceeded -> {
+                    recordWait(paymentStartedAt, "discarded")
+                    count("expired_before_send")
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = "There is no time for payment")
+                    }
+                }
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                     paymentESService.update(paymentId) {
@@ -169,11 +178,9 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    override fun parallelCapacity(): Int = minOf(
-        parallelRequests.toLong(),
-        kotlin.math.ceil(rateLimitPerSec * requestAverageProcessingTime.toNanos() / 1_000_000_000.0)
-            .toLong() + 1L
-    ).coerceAtLeast(1L).toInt()
+    override fun ratePerSecond(): Int = rateLimitPerSec
+
+    override fun parallelCapacity(): Int = parallelRequests.coerceAtLeast(1)
 
     override fun latestStart(deadline: Long) = deadline - requestAverageProcessingTime.toMillis()
 

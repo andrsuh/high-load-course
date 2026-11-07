@@ -4,6 +4,7 @@ import java.time.Duration
 import java.util.*
 
 interface PaymentService {
+    fun admissionRate(): Int
     fun workerCount(): Int
     fun latestStart(deadline: Long): Long
 
@@ -22,6 +23,7 @@ interface PaymentService {
 interface PaymentExternalSystemAdapter {
     fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
 
+    fun ratePerSecond(): Int
     fun parallelCapacity(): Int
     fun latestStart(deadline: Long): Long
 

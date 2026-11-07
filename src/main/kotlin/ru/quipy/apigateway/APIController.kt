@@ -14,6 +14,9 @@ import org.springframework.http.ResponseEntity
 @RestController
 class APIController {
 
+    @org.springframework.beans.factory.annotation.Value("\${payment.admission.retry-after-ms:100}")
+    private var retryAfterMillis: Long = 100
+
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
     @Autowired
@@ -72,8 +75,8 @@ class APIController {
     @ExceptionHandler(RejectedExecutionException::class)
     fun paymentQueueFull(): ResponseEntity<Map<String, String>> = ResponseEntity
         .status(HttpStatus.TOO_MANY_REQUESTS)
-        .header("Retry-After", "1")
-        .body(mapOf("error" to "Payment queue is full; retry later"))
+        .header("Retry-After", (System.currentTimeMillis() + retryAfterMillis).toString())
+        .body(mapOf("error" to "Payment admission limit reached; retry later"))
 
     class PaymentSubmissionDto(
         val timestamp: Long,
