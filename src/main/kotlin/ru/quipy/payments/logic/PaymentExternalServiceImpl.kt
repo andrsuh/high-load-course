@@ -24,6 +24,9 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentProviderHostPort: String,
     private val token: String,
     private val meterRegistry: MeterRegistry,
+    private val maxAttempts: Int,
+    private val retryDelayMillis: Long,
+    private val resultPersistenceReserveMillis: Long,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .retryOnConnectionFailure(false).readTimeout(Duration.ZERO).build(),
 ) : PaymentExternalSystemAdapter {
@@ -56,6 +59,9 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     init {
+        require(maxAttempts > 0)
+        require(retryDelayMillis >= 0)
+        require(resultPersistenceReserveMillis >= 0)
         listOf("expired_before_send", "success_on_time", "success_after_deadline",
             "provider_failure", "provider_error_unknown").forEach {
             meterRegistry.counter("payment.attempts", *tags, "outcome", it)
@@ -69,6 +75,22 @@ class PaymentExternalSystemAdapterImpl(
     private fun count(outcome: String) = meterRegistry.counter("payment.attempts", *tags, "outcome", outcome).increment()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        for (attempt in 1..maxAttempts) {
+            val retryable = performAttempt(paymentId, amount, paymentStartedAt, deadline)
+            if (!retryable || attempt == maxAttempts) return
+
+            if (latestStart(deadline) - now() <= retryDelayMillis) return
+            try {
+                Thread.sleep(retryDelayMillis)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
+            logger.info("[$accountName] Retrying payment $paymentId after Temporary error")
+        }
+    }
+
+    private fun performAttempt(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long): Boolean {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -100,7 +122,7 @@ class PaymentExternalSystemAdapterImpl(
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Outdated payment")
                 }
-                return
+                return false
             }
 
             val request = Request.Builder().run {
@@ -119,7 +141,11 @@ class PaymentExternalSystemAdapterImpl(
                 chain.proceed(chain.request())
             }.followRedirects(false).followSslRedirects(false).build()
             val body = try {
-                dispatchClient.newCall(request).execute().use { response ->
+                val callBudget = deadline - now() - resultPersistenceReserveMillis
+                if (callBudget <= 0) throw DispatchDeadlineExceeded()
+                val call = dispatchClient.newCall(request)
+                call.timeout().timeout(callBudget, java.util.concurrent.TimeUnit.MILLISECONDS)
+                call.execute().use { response ->
                     // Consume the body once; malformed responses still release the slot.
                     val rawBody = response.body?.string()
                     try {
@@ -148,6 +174,7 @@ class PaymentExternalSystemAdapterImpl(
             paymentESService.update(paymentId) {
                 it.logProcessing(body.result, processedAt, transactionId, reason = body.message)
             }
+            return !body.result && body.message?.trim()?.equals("Temporary error", ignoreCase = true) == true
         } catch (e: Exception) {
             if (providerStarted && !providerCompleted) count("provider_error_unknown")
             when (e) {
@@ -176,6 +203,7 @@ class PaymentExternalSystemAdapterImpl(
         } finally {
             if (windowAcquired) ongoingWindow.release()
         }
+        return false
     }
 
     override fun ratePerSecond(): Int = rateLimitPerSec
