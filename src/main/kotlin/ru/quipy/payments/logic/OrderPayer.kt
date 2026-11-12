@@ -27,11 +27,9 @@ class OrderPayer {
 
     // Каждая принятая оплата ставится в очередь на свой забронированный момент отправки (см. processPayment).
     // Очередь планировщика упорядочена по этому моменту; её длину ограничивает бронирование по дедлайну.
-    // Потоки заняты только самим вызовом провайдера, поэтому их число считаем по закону Литтла
+    // Задача стартует в свой слот и не ждёт лимитеров, поэтому число потоков считаем по закону Литтла (см. parallelism)
     private val paymentExecutor by lazy {
-        val threads = paymentService.parallelism()
-        logger.info("Payment executor threads: $threads")
-        ScheduledThreadPoolExecutor(threads, NamedThreadFactory("payment-submission-executor")).also { executor ->
+        ScheduledThreadPoolExecutor(paymentService.parallelism(), NamedThreadFactory("payment-submission-executor")).also { executor ->
             Metrics.gauge("shop_payment_queue_size", executor) { it.queue.size.toDouble() }
         }
     }
@@ -42,6 +40,13 @@ class OrderPayer {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         // Не берём оплату, которую не успеем провести до дедлайна: просим клиента прийти позже, вместо того чтобы платить провайдеру за опоздавший запрос
         val sendAt = paymentService.reserveSendSlot(deadline) ?: reject(deadline)
+
+        // Число потоков пересчитываем на лету: оно зависит от замеренного худшего времени оплаты
+        val threads = paymentService.parallelism()
+        if (threads != paymentExecutor.corePoolSize) {
+            logger.info("Payment executor threads: ${paymentExecutor.corePoolSize} -> $threads")
+            paymentExecutor.corePoolSize = threads
+        }
 
         val createdAt = System.currentTimeMillis()
         paymentExecutor.schedule({
