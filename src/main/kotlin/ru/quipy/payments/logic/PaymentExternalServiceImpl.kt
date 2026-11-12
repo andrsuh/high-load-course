@@ -18,6 +18,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.sqrt
 
 
 // Advice: always treat time as a Duration
@@ -57,15 +58,26 @@ class PaymentExternalSystemAdapterImpl(
     private val windowBound = parallelRequests * 1000.0 / requestAverageProcessingTime.toMillis()
     private val throughputPerSec = minOf(rateBound, windowBound)
 
+    // Сколько слот провайдера в среднем занят одним вызовом: от него зависит, как часто освобождаются места в окне parallelRequests
+    private val slotHoldStats = LatencyStats()
+
     // Входной лимитер: бронирует каждой принятой оплате момент отправки к провайдеру.
     // Если упираемся в rate limit - то же скользящее окно, что и на выходе, но длиннее на шаг опроса выходного лимитера:
     // к моменту брони разрешение там уже точно освободилось, и запросы не накапливают отставание от расписания.
     // Этот же зазор - запас на разброс доставки, ведь провайдер считает лимит по времени прихода.
-    // Если упираемся в окно - parallelRequests отправок за averageProcessingTime (столько освобождается слотов семафора)
-    private val sendSchedule = if (windowBound < rateBound) {
-        SlidingWindowReservations(parallelRequests, requestAverageProcessingTime)
+    // Если упираемся в окно - parallelRequests отправок за среднее время занятия слота (закон Литтла):
+    // берём замер, а не обещанный avg, иначе расписание обгоняет реальность и опоздания копятся
+    private val isWindowBound = windowBound < rateBound
+    private val sendSchedule = if (isWindowBound) {
+        SlidingWindowReservations(parallelRequests)
     } else {
-        SlidingWindowReservations(rateLimitPerSec, rateLimitWindow + SlidingWindowRateLimiter.POLL_INTERVAL)
+        SlidingWindowReservations(rateLimitPerSec)
+    }
+
+    private fun scheduleWindow(horizon: Duration): Duration = if (isWindowBound) {
+        Duration.ofMillis(slotHoldStats.meanOver(horizon)?.toLong() ?: requestAverageProcessingTime.toMillis())
+    } else {
+        rateLimitWindow + SlidingWindowRateLimiter.POLL_INTERVAL
     }
 
     // Сколько реально длится оплата у этого аккаунта (от забронированного момента отправки до ответа провайдера): меряем на лету
@@ -84,31 +96,45 @@ class PaymentExternalSystemAdapterImpl(
         return worst
     }
 
-    // Закон Литтла с худшим временем: одновременно в полёте до throughputPerSec * худшее время вызовов,
-    // столько потоков нужно, чтобы пул не стал узким местом. Больше parallelRequests брать бессмысленно
-    override fun parallelism(): Int {
-        val inFlight = Math.ceil(throughputPerSec * worstExecutionMs.get() / 1000.0).toInt()
+    // Закон Литтла с верхней границей времени: оплата, которая длится дольше, чем клиент готов ждать, уже никому не нужна,
+    // поэтому одновременно в полёте не больше throughputPerSec * (дедлайн - сейчас) оплат. Столько потоков пул никогда
+    // не станет узким местом. Больше parallelRequests брать бессмысленно - лишние ждали бы на семафоре
+    override fun parallelism(deadline: Long): Int {
+        val inFlight = Math.ceil(throughputPerSec * (deadline - now()) / 1000.0).toInt()
         return inFlight.coerceIn(1, parallelRequests)
     }
 
     override fun reserveSendSlot(deadline: Long): Long? {
         val now = now()
-        val worst = estimateWorstExecutionMs(Duration.ofMillis(deadline - now))
-        return sendSchedule.reserve(now) { slot -> slot + worst <= deadline }
+        val horizon = Duration.ofMillis(deadline - now)
+        val worst = estimateWorstExecutionMs(horizon)
+        val holdStd = slotHoldStats.stdOver(horizon) ?: 0.0
+        return sendSchedule.reserve(now, scheduleWindow(horizon)) { slot ->
+            slot + waitJitter(slot - now, holdStd) + worst <= deadline
+        }
+    }
+
+    // Если упираемся в окно, места освобождаются в случайные моменты (когда кто-то из parallelRequests закончил):
+    // ожидание (впереди + 1) освобождений - сумма случайных времён, её разброс sigma * sqrt(впереди + 1) / parallelRequests,
+    // где sigma - замеренный разброс времени занятия слота. Берём правило трёх сигм (99,7%).
+    // Если упираемся в rate limit, разрешения выдаются строго по времени и разброса нет
+    private fun waitJitter(waitMs: Long, holdStd: Double): Double {
+        if (!isWindowBound) return 0.0
+        val ahead = waitMs * throughputPerSec / 1000
+        return 3 * holdStd * sqrt(ahead + 1) / parallelRequests
     }
 
     // Когда запрос с тем же запасом времени до дедлайна уже поместится: ближайший слот минус этот запас
     override fun retryAfter(deadline: Long): Long {
         val now = now()
         val budget = deadline - now - worstExecutionMs.get()
-        return maxOf(now + (1000 / throughputPerSec).toLong(), sendSchedule.nextSlot(now) - budget)
+        return maxOf(now + (1000 / throughputPerSec).toLong(), sendSchedule.nextSlot(now, scheduleWindow(Duration.ofMillis(deadline - now))) - budget)
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, sendAt: Long) {
         // Оплату засчитывает сам провайдер в момент ответа, поэтому меряем от забронированного момента до получения ответа:
         // сюда попадают и задержка старта задачи, и запись в базу перед отправкой, а запись результата после ответа - нет
         val startedAt = sendAt
-        var responded = false
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -121,8 +147,10 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
+        // Слот провайдера держим только на время самого вызова: запись результата в базу идёт уже после
         parallelLimiter.acquire()
-        try {
+        val acquiredAt = now()
+        val (code, rawBody) = try {
             rateLimiter.tickBlocking()
 
             val request = Request.Builder().run {
@@ -131,44 +159,33 @@ class PaymentExternalSystemAdapterImpl(
             }.build()
 
             providerRequests.increment()
-            client.newCall(request).execute().use { response ->
-                responded = true
-                executionStats.record(now() - startedAt)
-                val body = try {
-                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
-                }
-
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
-            }
+            client.newCall(request).execute().use { response -> response.code to response.body?.string() }
         } catch (e: Exception) {
-            if (!responded) executionStats.record(now() - startedAt)
-            when (e) {
-                is SocketTimeoutException -> {
-                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                    }
-                }
-
-                else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
-                }
+            executionStats.record(now() - startedAt)
+            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = if (e is SocketTimeoutException) "Request timeout." else e.message)
             }
+            return
         } finally {
             parallelLimiter.release()
+            slotHoldStats.record(now() - acquiredAt)
+        }
+        executionStats.record(now() - startedAt)
+
+        val body = try {
+            mapper.readValue(rawBody, ExternalSysResponse::class.java)
+        } catch (e: Exception) {
+            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: $code, reason: $rawBody")
+            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+        }
+
+        logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+        // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+        // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+        paymentESService.update(paymentId) {
+            it.logProcessing(body.result, now(), transactionId, reason = body.message)
         }
     }
 

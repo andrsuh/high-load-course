@@ -12,7 +12,7 @@ interface PaymentService {
     /**
      * How many payments should be processed concurrently to use the accounts at full speed.
      */
-    fun parallelism(): Int
+    fun parallelism(deadline: Long): Int
 
     /**
      * Reserve the moment (ms) to send the payment to the provider so that it is processed before the deadline,
@@ -35,7 +35,7 @@ interface PaymentService {
 interface PaymentExternalSystemAdapter {
     fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, sendAt: Long)
 
-    fun parallelism(): Int
+    fun parallelism(deadline: Long): Int
 
     fun reserveSendSlot(deadline: Long): Long?
 
