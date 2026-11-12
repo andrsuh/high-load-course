@@ -1,16 +1,27 @@
 package ru.quipy.payments.logic
 
 import com.sun.net.httpserver.HttpServer
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.mockito.Mockito
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import ru.quipy.apigateway.ratelimit.PaymentCallAdmission
+import ru.quipy.core.BasicAggregateRegistry
+import ru.quipy.core.EventSourcingProperties
+import ru.quipy.core.EventSourcingService
+import ru.quipy.database.EventStore
+import ru.quipy.domain.EventRecord
+import ru.quipy.mapper.JsonEventMapper
+import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.api.PaymentCreatedEvent
 import ru.quipy.payments.api.PaymentProcessedEvent
 import ru.quipy.payments.api.PaymentSubmittedEvent
 import java.net.InetSocketAddress
-import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -62,6 +73,16 @@ class PaymentExternalSystemAdapterTest {
     }
 
     @Test
+    fun `HTTP retry statuses follow the supplied configuration`() = Fixture(retryableStatuses = setOf(409)).use { f ->
+        f.responses.add(Reply(status = 409))
+        f.responses.add(Reply(status = 500))
+        f.pay()
+        assertEquals(2, f.requests.size)
+        assertEquals(listOf(false, false), f.processings.map { it.success })
+        assertTrue(f.processings.last().reason!!.startsWith("HTTP 500"))
+    }
+
+    @Test
     fun `permanent business failure is not retried`() = Fixture().use { f ->
         f.responses.add(Reply(result = false, message = "Payment declined"))
         f.pay()
@@ -94,6 +115,34 @@ class PaymentExternalSystemAdapterTest {
             assertEquals(1, f.requests.size)
             assertEquals(listOf(false, false), f.processings.map { it.success })
             assertTrue(f.processings.last().reason!!.contains("Deadline"))
+        }
+
+    @Test
+    fun `retry can finish below the average when its scaled estimate fits`() =
+        Fixture(averageProcessingTime = Duration.ofMillis(700), processingTimeFactor = 0.7).use { f ->
+            f.responses.add(Reply(result = false, message = "Temporary error", delayMs = 400))
+            f.pay(budgetMs = 1_000)
+            assertEquals(2, f.requests.size)
+            assertEquals(listOf(false, true), f.processings.map { it.success })
+            assertEquals(listOf(Duration.ofMillis(700), Duration.ofMillis(490)), f.processingTimeEstimates)
+        }
+
+    @Test
+    fun `initial attempt still requires the full account average`() =
+        Fixture(averageProcessingTime = Duration.ofMillis(700), processingTimeFactor = 0.7).use { f ->
+            f.pay(budgetMs = 600)
+            assertTrue(f.requests.isEmpty())
+            assertEquals(0, f.permits)
+            assertTrue(f.processings.single().reason!!.contains("Deadline"))
+        }
+
+    @Test
+    fun `retry estimate scales with the selected account`() =
+        Fixture(averageProcessingTime = Duration.ofMillis(200), processingTimeFactor = 0.7).use { f ->
+            f.responses.add(Reply(result = false, message = "Temporary error"))
+            f.pay()
+            assertEquals(listOf(Duration.ofMillis(200), Duration.ofMillis(140)), f.processingTimeEstimates)
+            assertTrue(f.processings.last().success)
         }
 
     @Test
@@ -176,27 +225,30 @@ class PaymentExternalSystemAdapterTest {
         val delayMs: Long = 0,
     )
 
-    private class Fixture(maxAttempts: Int = 5, averageProcessingTime: Duration = Duration.ofMillis(10)) : AutoCloseable {
+    private class Fixture(
+        maxAttempts: Int = 5,
+        averageProcessingTime: Duration = Duration.ofMillis(10),
+        retryableStatuses: Set<Int> = setOf(429, 500, 502, 503, 504),
+        processingTimeFactor: Double = 1.0,
+    ) : AutoCloseable {
         val paymentId: UUID = UUID.randomUUID()
-        val submissions = mutableListOf<PaymentSubmittedEvent>()
-        val processings = mutableListOf<PaymentProcessedEvent>()
+        val submissions get() = records.filter { it.eventTitle == "PAYMENT_SUBMITTED_EVENT" }
+            .map { mapper.toEvent(it.payload, PaymentSubmittedEvent::class) as PaymentSubmittedEvent }
+        val processings get() = records.filter { it.eventTitle == "PAYMENT_PROCESSED_EVENT" }
+            .map { mapper.toEvent(it.payload, PaymentProcessedEvent::class) as PaymentProcessedEvent }
         val requests = CopyOnWriteArrayList<Map<String, String>>()
         val responses = java.util.concurrent.LinkedBlockingQueue<Reply>()
         var permits = 0
+        val processingTimeEstimates = mutableListOf<Duration?>()
         var allowPermit: (Int) -> Boolean = { true }
         var failProcessingWrite = false
-        private val state = PaymentAggregateState().also {
-            it.paymentCreatedApply(it.create(paymentId, UUID.randomUUID(), 100))
-        }
         private val executor = Executors.newCachedThreadPool()
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             this.executor = this@Fixture.executor
             createContext("/external/process") { exchange ->
                 try {
-                    requests.add(exchange.requestURI.rawQuery.split('&').associate { pair ->
-                        val parts = pair.split('=', limit = 2)
-                        URLDecoder.decode(parts[0], StandardCharsets.UTF_8) to URLDecoder.decode(parts[1], StandardCharsets.UTF_8)
-                    })
+                    val url = "http://localhost${exchange.requestURI}".toHttpUrl()
+                    requests.add(url.queryParameterNames.associateWith { url.queryParameter(it).orEmpty() })
                     val reply = responses.poll() ?: Reply()
                     if (reply.delayMs > 0) Thread.sleep(reply.delayMs)
                     reply.retryAfter?.let { exchange.responseHeaders.add("Retry-After", it) }
@@ -204,7 +256,6 @@ class PaymentExternalSystemAdapterTest {
                     exchange.sendResponseHeaders(reply.status, body.size.toLong())
                     exchange.responseBody.use { it.write(body) }
                 } catch (_: java.io.IOException) {
-                    // The deadline test deliberately closes the client connection first.
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                 } finally {
@@ -214,30 +265,50 @@ class PaymentExternalSystemAdapterTest {
             start()
         }
 
-        private val recorder = object : PaymentAttemptRecorder {
-            override fun submitted(paymentId: UUID, transactionId: UUID, startedAt: Long, spentInQueue: Duration) {
-                val event = state.logSubmission(true, transactionId, startedAt, spentInQueue)
-                submissions.add(event)
-                state.paymentSubmittedApply(event)
-            }
-
-            override fun processed(paymentId: UUID, transactionId: UUID, success: Boolean, processedAt: Long, reason: String?) {
-                if (failProcessingWrite) error("Event store unavailable")
-                val event = state.logProcessing(success, processedAt, transactionId, reason)
-                processings.add(event)
-                state.paymentSubmittedApply(event)
+        private val registry = BasicAggregateRegistry().apply {
+            register<UUID, PaymentAggregate, PaymentAggregateState>(PaymentAggregate::class, PaymentAggregateState::class) {
+                registerStateTransition(PaymentCreatedEvent::class, PaymentAggregateState::paymentCreatedApply)
+                registerStateTransition(PaymentSubmittedEvent::class, PaymentAggregateState::paymentSubmittedApply)
+                registerStateTransition(PaymentProcessedEvent::class, PaymentAggregateState::paymentSubmittedApply)
             }
         }
+        private val mapper = JsonEventMapper(ObjectMapper().registerKotlinModule().registerModule(JavaTimeModule()))
+        private val records = mutableListOf<EventRecord>()
+        private val store = Mockito.mock(EventStore::class.java) { invocation ->
+            when (invocation.method.name) {
+                "findEventRecordsWithAggregateVersionGraterThan" ->
+                    records.filter { it.aggregateVersion > invocation.getArgument<Long>(2) }
+                "insertEventRecord" -> {
+                    val record = invocation.getArgument<EventRecord>(1)
+                    if (failProcessingWrite && record.eventTitle == "PAYMENT_PROCESSED_EVENT") error("Event store unavailable")
+                    records.add(record)
+                    null
+                }
+                else -> Mockito.RETURNS_DEFAULTS.answer(invocation)
+            }
+        }
+        private val payments = EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>(
+            PaymentAggregate::class, registry, mapper,
+            Mockito.mock(EventSourcingProperties::class.java).apply {
+                Mockito.`when`(snapshotFrequency).thenReturn(100)
+                Mockito.`when`(spinLockMaxAttempts).thenReturn(3)
+            }, store,
+        ).also { service -> service.create { it.create(paymentId, UUID.randomUUID(), 100) } }
 
         private val adapter = PaymentExternalSystemAdapterImpl(
             PaymentAccountProperties("service", "acc-8", 50, 10, 30, averageProcessingTime, true),
-            recorder,
+            payments,
             "127.0.0.1:${server.address.port}",
             "test-token",
             object : PaymentCallAdmission {
-                override fun awaitCall(accountName: String, deadline: Long): Boolean = allowPermit(++permits)
+                override fun awaitCall(accountName: String, deadline: Long, processingTimeEstimate: Duration?): Boolean {
+                    processingTimeEstimates.add(processingTimeEstimate)
+                    return allowPermit(++permits)
+                }
             },
             maxAttempts,
+            retryableStatuses,
+            processingTimeFactor,
         )
 
         fun pay(budgetMs: Long = 3_500) {

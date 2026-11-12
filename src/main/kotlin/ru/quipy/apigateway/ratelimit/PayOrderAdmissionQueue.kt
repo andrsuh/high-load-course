@@ -41,7 +41,7 @@ interface PayOrderRequestQueue {
 }
 
 interface PaymentCallAdmission {
-    fun awaitCall(accountName: String, deadline: Long): Boolean
+    fun awaitCall(accountName: String, deadline: Long, processingTimeEstimate: Duration? = null): Boolean
 }
 
 @Component
@@ -137,13 +137,15 @@ class PayOrderAdmissionQueue(
         return result
     }
 
-    override fun awaitCall(accountName: String, deadline: Long): Boolean {
+    override fun awaitCall(accountName: String, deadline: Long, processingTimeEstimate: Duration?): Boolean {
         val account = accountsByName.getValue(accountName)
+        val processingTime = processingTimeEstimate ?: account.averageProcessingTime
+        require(!processingTime.isNegative) { "Payment processing time estimate must not be negative" }
         val timestamps = actualCallWindows.getValue(accountName)
         try {
             lock.withLock {
                 while (!closed.get()) {
-                    val remainingMs = deadline - System.currentTimeMillis() - account.averageProcessingTime.toMillis()
+                    val remainingMs = deadline - System.currentTimeMillis() - processingTime.toMillis()
                     if (remainingMs <= 0) return false
 
                     val nowNanos = System.nanoTime()

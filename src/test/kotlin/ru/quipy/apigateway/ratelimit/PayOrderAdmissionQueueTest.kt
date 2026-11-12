@@ -14,6 +14,18 @@ import java.util.concurrent.TimeUnit
 
 class PayOrderAdmissionQueueTest {
     @Test
+    fun `rate admission uses the supplied retry estimate`() {
+        val queue = queue(account(parallelRequests = 50, rateLimitPerSec = 10, processingTime = Duration.ofMillis(700)))
+        try {
+            val deadline = System.currentTimeMillis() + 600
+            assertFalse(queue.awaitCall("acc-5", deadline))
+            assertTrue(queue.awaitCall("acc-5", deadline, Duration.ofMillis(490)))
+        } finally {
+            queue.close()
+        }
+    }
+
+    @Test
     fun `calls reserve the account average processing time`() {
         val queue = queue(account(parallelRequests = 50, rateLimitPerSec = 10, processingTime = Duration.ofMillis(700)))
         try {
