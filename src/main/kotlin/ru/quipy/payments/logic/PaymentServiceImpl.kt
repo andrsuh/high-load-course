@@ -124,7 +124,7 @@ class PaymentSystemImpl(
         val adapter: PaymentExternalSystemAdapter
     ) {
         val processSec =  adapter.rapt()
-        val threads = ceil(adapter.rpc() * processSec.toSeconds().toDouble())
+        val threads = ceil(adapter.rpc() * (processSec.toMillis() / 1000.0))
             .toInt()
             .coerceIn(1, adapter.pr().toInt())
         val throughput = min(adapter.rpc(), (threads.toDouble() / (processSec.toMillis() / 1000.0)))
