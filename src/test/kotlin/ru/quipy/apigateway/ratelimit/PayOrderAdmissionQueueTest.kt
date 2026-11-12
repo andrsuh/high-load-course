@@ -14,6 +14,17 @@ import java.util.concurrent.TimeUnit
 
 class PayOrderAdmissionQueueTest {
     @Test
+    fun `calls reserve the account average processing time`() {
+        val queue = queue(account(parallelRequests = 50, rateLimitPerSec = 10, processingTime = Duration.ofMillis(700)))
+        try {
+            assertFalse(queue.awaitCall("acc-5", System.currentTimeMillis() + 500))
+            assertTrue(queue.awaitCall("acc-5", System.currentTimeMillis() + 1_000))
+        } finally {
+            queue.close()
+        }
+    }
+
+    @Test
     fun `request waits without taking an extra parallel slot`() {
         val queue = queue(account(parallelRequests = 1, rateLimitPerSec = 10, processingTime = Duration.ofMillis(100)))
         val releases = CopyOnWriteArrayList<() -> Unit>()

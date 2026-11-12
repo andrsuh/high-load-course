@@ -60,14 +60,16 @@ class PaymentAccountsConfig {
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
         paymentAccountProperties: List<PaymentAccountProperties>,
         paymentCallAdmission: PaymentCallAdmission,
+        @Value("\${payment.retry.max-attempts:5}") maxAttempts: Int,
     ): List<PaymentExternalSystemAdapter> {
         return paymentAccountProperties.map {
             PaymentExternalSystemAdapterImpl(
                 it,
-                paymentService,
+                EventSourcedPaymentAttemptRecorder(paymentService),
                 paymentProviderHostPort,
                 token,
-                paymentCallAdmission
+                paymentCallAdmission,
+                maxAttempts,
             )
         }
     }
