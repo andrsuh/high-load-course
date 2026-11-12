@@ -58,15 +58,17 @@ class PaymentExternalSystemAdapterImpl(
     private val throughputPerSec = minOf(rateBound, windowBound)
 
     // Входной лимитер: бронирует каждой принятой оплате момент отправки к провайдеру.
-    // Если упираемся в rate limit - то же скользящее окно, что и на выходе: rateLimitPerSec отправок за секунду.
+    // Если упираемся в rate limit - то же скользящее окно, что и на выходе, но длиннее на шаг опроса выходного лимитера:
+    // к моменту брони разрешение там уже точно освободилось, и запросы не накапливают отставание от расписания.
+    // Этот же зазор - запас на разброс доставки, ведь провайдер считает лимит по времени прихода.
     // Если упираемся в окно - parallelRequests отправок за averageProcessingTime (столько освобождается слотов семафора)
     private val sendSchedule = if (windowBound < rateBound) {
         SlidingWindowReservations(parallelRequests, requestAverageProcessingTime)
     } else {
-        SlidingWindowReservations(rateLimitPerSec, rateLimitWindow)
+        SlidingWindowReservations(rateLimitPerSec, rateLimitWindow + SlidingWindowRateLimiter.POLL_INTERVAL)
     }
 
-    // Сколько реально длится оплата у этого аккаунта (от момента отправки до ответа провайдера): меряем на лету
+    // Сколько реально длится оплата у этого аккаунта (от забронированного момента отправки до ответа провайдера): меряем на лету
     private val executionStats = LatencyStats()
 
     // До первых замеров опираемся на то, что обещает провайдер: время ответа в среднем avg,
@@ -88,10 +90,13 @@ class PaymentExternalSystemAdapterImpl(
         return minOf(parallelRequests, inFlight)
     }
 
+    // Худшее время оплаты: замеренное, но не меньше обещанного провайдером (время ответа до 2 * avg)
+    private fun worstExecutionMs(stats: LatencyStats.Snapshot) = maxOf(stats.maxMs, declaredStats.maxMs)
+
     override fun reserveSendSlot(deadline: Long): Long? {
         val now = now()
         val stats = executionStats.snapshot() ?: declaredStats
-        return sendSchedule.reserve(now) { slot -> slot + waitJitter(slot - now, stats) + stats.maxMs <= deadline }
+        return sendSchedule.reserve(now) { slot -> slot + waitJitter(slot - now, stats) + worstExecutionMs(stats) <= deadline }
     }
 
     // Если упираемся в окно, слоты освобождаются в случайные моменты (когда кто-то из parallelRequests закончил),
@@ -106,14 +111,15 @@ class PaymentExternalSystemAdapterImpl(
     // Когда запрос с тем же запасом времени до дедлайна уже поместится: ближайший слот минус этот запас
     override fun retryAfter(deadline: Long): Long {
         val now = now()
-        val budget = deadline - now - (executionStats.snapshot() ?: declaredStats).maxMs
+        val budget = deadline - now - worstExecutionMs(executionStats.snapshot() ?: declaredStats)
         return maxOf(now + (1000 / throughputPerSec).toLong(), sendSchedule.nextSlot(now) - budget)
     }
 
-    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        // Оплату засчитывает сам провайдер в момент ответа, поэтому меряем от начала до получения ответа:
-        // запись результата в базу после ответа на дедлайн уже не влияет
-        val startedAt = now()
+    override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, sendAt: Long) {
+        // Оплату засчитывает сам провайдер в момент ответа, поэтому меряем от забронированного момента до получения ответа:
+        // сюда попадают и задержка старта задачи, и запись в базу перед отправкой, а запись результата после ответа - нет
+        val startedAt = sendAt
+        var responded = false
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -137,6 +143,7 @@ class PaymentExternalSystemAdapterImpl(
 
             providerRequests.increment()
             client.newCall(request).execute().use { response ->
+                responded = true
                 executionStats.record(now() - startedAt)
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
@@ -154,7 +161,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         } catch (e: Exception) {
-            executionStats.record(now() - startedAt)
+            if (!responded) executionStats.record(now() - startedAt)
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)

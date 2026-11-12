@@ -45,16 +45,21 @@ class OrderPayer {
 
         val createdAt = System.currentTimeMillis()
         paymentExecutor.schedule({
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
-            }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+            // Исключение внутри задачи планировщик молча сохранил бы в никем не читаемый Future, поэтому логируем сами
+            try {
+                val createdEvent = paymentESService.create {
+                    it.create(
+                        paymentId,
+                        orderId,
+                        amount
+                    )
+                }
+                logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+                paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, sendAt)
+            } catch (e: Exception) {
+                logger.error("Payment $paymentId for order $orderId failed", e)
+            }
         }, sendAt - createdAt, TimeUnit.MILLISECONDS)
         acceptedPayments.increment()
         return createdAt

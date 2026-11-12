@@ -7,7 +7,7 @@ interface PaymentService {
     /**
      * Submit payment request to some external service.
      */
-    fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
+    fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, sendAt: Long)
 
     /**
      * How many payments should be processed concurrently to use the accounts at full speed.
@@ -33,7 +33,7 @@ interface PaymentService {
 
  */
 interface PaymentExternalSystemAdapter {
-    fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
+    fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, sendAt: Long)
 
     fun parallelism(): Int
 
