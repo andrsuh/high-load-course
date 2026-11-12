@@ -3606,7 +3606,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Оплаты в очереди пула OrderPayer, которые ждут свободного потока",
+          "description": "Принятые оплаты, которые ждут своего забронированного момента отправки к провайдеру",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3658,7 +3658,7 @@
               "refId": "A"
             }
           ],
-          "title": "Payments queue size (waiting for a thread)",
+          "title": "Payments queue size (waiting for their send slot)",
           "type": "timeseries"
         },
         {
