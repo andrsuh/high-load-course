@@ -49,6 +49,7 @@ class PaymentExternalSystemAdapterImpl(
     private val pendingPayments = AtomicInteger()
     private val processingBudgetMillis = requestAverageProcessingTime.toMillis()
     private val providerTailMillis = processingBudgetMillis * 2
+    private val burstProviderTailMillis = processingBudgetMillis * 3
     private val shortDeadlineMillis = 3_000L
     private val burstDeadlineMillis = 20_000L
     private val shortDispatchBudgetMillis = 100L
@@ -84,7 +85,8 @@ class PaymentExternalSystemAdapterImpl(
             pendingPayments.incrementAndGet()
             return null
         }
-        val maxPending = ((deadline - now - providerTailMillis) * submissionRate / 1_000).coerceAtLeast(1)
+        val processingReserve = if (deadline - now >= burstDeadlineMillis) burstProviderTailMillis else providerTailMillis
+        val maxPending = ((deadline - now - processingReserve) * submissionRate / 1_000).coerceAtLeast(1)
         while (true) {
             val pending = pendingPayments.get()
             if (pending.toLong() >= maxPending) return reserveRetryAt(now)
@@ -131,8 +133,9 @@ class PaymentExternalSystemAdapterImpl(
         var slotAcquired = reservedPermit != null
         var submitted = false
         val transactionId = UUID.randomUUID()
-        val latestSubmissionAt = deadline - providerTailMillis
         val burstMode = deadline - paymentStartedAt >= burstDeadlineMillis
+        val processingReserve = if (burstMode) burstProviderTailMillis else providerTailMillis
+        val latestSubmissionAt = deadline - processingReserve
 
         try {
             logger.warn("[$accountName] Submitting payment request for payment $paymentId")
