@@ -156,7 +156,7 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
-            if (burstMode) {
+            if (burstMode || shortMode) {
                 dispatchPermit = dispatchRateLimiter.reserveBlockingUntil(latestSubmissionAt)
                 if (dispatchPermit == null) {
                     paymentESService.update(paymentId) {
