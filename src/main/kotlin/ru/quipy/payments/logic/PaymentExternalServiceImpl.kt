@@ -54,7 +54,7 @@ class PaymentExternalSystemAdapterImpl(
     private val burstDeadlineMillis = 20_000L
     private val burstQueueBudgetMillis = 20_000L
     private val burstQueueCapacity = submissionRate * burstQueueBudgetMillis / 1_000
-    private val shortQueueCapacity = (submissionRate * 3 / 4).coerceAtLeast(1)
+    private val shortQueueCapacity = submissionRate
     private val dispatchRateLimiter = SlidingWindowRateLimiter(submissionRate.toLong(), Duration.ofMillis(1_025))
     private val retryAfterMillis = (1_000L + submissionRate - 1) / submissionRate
     private val nextRetryAt = AtomicLong()
