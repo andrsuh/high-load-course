@@ -52,7 +52,8 @@ class PaymentExternalSystemAdapterImpl(
     private val burstProviderTailMillis = processingBudgetMillis * 3
     private val shortDeadlineMillis = 3_000L
     private val burstDeadlineMillis = 20_000L
-    private val burstQueueCapacity = submissionRate * 2L
+    private val burstQueueBudgetMillis = 12_000L
+    private val burstQueueCapacity = submissionRate * burstQueueBudgetMillis / 1_000
     private val shortDispatchBudgetMillis = 100L
     private val dispatchRateLimiter = SlidingWindowRateLimiter(submissionRate.toLong(), Duration.ofMillis(1_025))
     private val shortReservations = ConcurrentHashMap<UUID, SlidingWindowRateLimiter.Permit>()
