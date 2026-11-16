@@ -52,6 +52,7 @@ class PaymentExternalSystemAdapterImpl(
     private val burstProviderTailMillis = processingBudgetMillis * 3
     private val shortDeadlineMillis = 3_000L
     private val burstDeadlineMillis = 20_000L
+    private val burstQueueCapacity = submissionRate * 2L
     private val shortDispatchBudgetMillis = 100L
     private val dispatchRateLimiter = SlidingWindowRateLimiter(submissionRate.toLong(), Duration.ofMillis(1_025))
     private val shortReservations = ConcurrentHashMap<UUID, SlidingWindowRateLimiter.Permit>()
@@ -86,7 +87,12 @@ class PaymentExternalSystemAdapterImpl(
             return null
         }
         val processingReserve = if (deadline - now >= burstDeadlineMillis) burstProviderTailMillis else providerTailMillis
-        val maxPending = ((deadline - now - processingReserve) * submissionRate / 1_000).coerceAtLeast(1)
+        val deadlineCapacity = ((deadline - now - processingReserve) * submissionRate / 1_000).coerceAtLeast(1)
+        val maxPending = if (deadline - now >= burstDeadlineMillis) {
+            minOf(deadlineCapacity, burstQueueCapacity)
+        } else {
+            deadlineCapacity
+        }
         while (true) {
             val pending = pendingPayments.get()
             if (pending.toLong() >= maxPending) return reserveRetryAt(now)
