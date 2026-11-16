@@ -47,13 +47,14 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
     private val pendingPayments = AtomicInteger()
     private val processingBudgetMillis = requestAverageProcessingTime.toMillis()
-    private val shortProviderTailMillis = processingBudgetMillis + 100
+    private val shortProviderTailMillis = processingBudgetMillis + 500
     private val providerTailMillis = processingBudgetMillis * 2
     private val burstProviderTailMillis = processingBudgetMillis * 3
     private val shortDeadlineMillis = 3_000L
     private val burstDeadlineMillis = 20_000L
     private val burstQueueBudgetMillis = 20_000L
     private val burstQueueCapacity = submissionRate * burstQueueBudgetMillis / 1_000
+    private val shortQueueCapacity = (submissionRate * 3 / 4).coerceAtLeast(1)
     private val dispatchRateLimiter = SlidingWindowRateLimiter(submissionRate.toLong(), Duration.ofMillis(1_025))
     private val retryAfterMillis = (1_000L + submissionRate - 1) / submissionRate
     private val nextRetryAt = AtomicLong()
@@ -68,7 +69,7 @@ class PaymentExternalSystemAdapterImpl(
         val now = now()
         if (deadline - now <= shortDeadlineMillis) {
             val maxPending = ((deadline - now - shortProviderTailMillis) * submissionRate / 1_000)
-                .coerceIn(0L, submissionRate.toLong())
+                .coerceIn(0L, shortQueueCapacity.toLong())
             while (true) {
                 val pending = pendingPayments.get()
                 if (pending.toLong() >= maxPending) return shortRetryAt(paymentId, now)
