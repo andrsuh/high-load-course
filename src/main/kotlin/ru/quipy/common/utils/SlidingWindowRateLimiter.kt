@@ -36,6 +36,12 @@ class SlidingWindowRateLimiter(
         }
     }
 
+    fun retryAt(): Long {
+        val now = System.currentTimeMillis()
+        return queue.peek()?.let { maxOf(now + 1, it.timestamp + window.toMillis()) }
+            ?: now + window.toMillis()
+    }
+
     private fun tryReserve(): Permit? {
         while (true) {
             val current = count.get()

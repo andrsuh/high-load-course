@@ -8,7 +8,7 @@ class LeakingBucketRateLimiter(
     private val window: Duration,
     private val bucketSize: Int,
 ) : RateLimiter {
-    private val intervalNanos = (window.toNanos() + rate - 1) / rate + 1_000_000
+    private val intervalNanos = (window.toNanos() + rate - 1) / rate
     private var nextPermitAt = System.nanoTime()
     private var reservations = 0
 

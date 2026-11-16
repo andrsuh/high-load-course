@@ -49,6 +49,7 @@ class PaymentExternalSystemAdapterImpl(
     private val processingBudgetMillis = requestAverageProcessingTime.toMillis()
     private val providerTailMillis = processingBudgetMillis * 2
     private val shortDeadlineMillis = 3_000L
+    private val burstDeadlineMillis = 20_000L
     private val shortDispatchBudgetMillis = 100L
     private val dispatchRateLimiter = SlidingWindowRateLimiter(submissionRate.toLong(), Duration.ofMillis(1_025))
     private val shortReservations = ConcurrentHashMap<UUID, SlidingWindowRateLimiter.Permit>()
@@ -74,20 +75,20 @@ class PaymentExternalSystemAdapterImpl(
             }
             if (permit == null) {
                 window.release()
-                return now
+                return dispatchRateLimiter.retryAt()
             }
 
             shortReservations[paymentId] = permit
             pendingPayments.incrementAndGet()
             return null
         }
-        val maxPending = ((deadline - now - processingBudgetMillis) * submissionRate / 1_000).coerceAtLeast(1)
+        val maxPending = ((deadline - now - providerTailMillis) * submissionRate / 1_000).coerceAtLeast(1)
         while (true) {
             val pending = pendingPayments.get()
             if (pending.toLong() >= maxPending) return now + retryAfterMillis
             if (pendingPayments.compareAndSet(pending, pending + 1)) break
         }
-        if (admissionRateLimiter.tick()) return null
+        if (deadline - now >= burstDeadlineMillis || admissionRateLimiter.tick()) return null
         pendingPayments.decrementAndGet()
         return now + retryAfterMillis
     }
@@ -121,6 +122,7 @@ class PaymentExternalSystemAdapterImpl(
         var submitted = false
         val transactionId = UUID.randomUUID()
         val latestSubmissionAt = deadline - providerTailMillis
+        val burstMode = deadline - paymentStartedAt >= burstDeadlineMillis
 
         try {
             logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -140,11 +142,21 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             if (reservedPermit == null) {
-                if (!rateLimiter.reserveBlockingUntil(latestSubmissionAt)) {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
+                if (burstMode) {
+                    dispatchPermit = dispatchRateLimiter.reserveBlockingUntil(latestSubmissionAt)
+                    if (dispatchPermit == null) {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
+                        }
+                        return
                     }
-                    return
+                } else {
+                    if (!rateLimiter.reserveBlockingUntil(latestSubmissionAt)) {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
+                        }
+                        return
+                    }
                 }
 
                 if (!window.tryAcquire(latestSubmissionAt - now())) {
@@ -154,14 +166,6 @@ class PaymentExternalSystemAdapterImpl(
                     return
                 }
                 slotAcquired = true
-
-                dispatchPermit = dispatchRateLimiter.reserveBlockingUntil(latestSubmissionAt)
-                if (dispatchPermit == null) {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
-                    }
-                    return
-                }
             }
 
             if (now() > latestSubmissionAt) {
@@ -176,7 +180,7 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            dispatchPermit.markSubmitted()
+            dispatchPermit?.markSubmitted()
             client.newCall(request).enqueue(object : Callback {
                 override fun onResponse(call: Call, response: Response) {
                     try {
