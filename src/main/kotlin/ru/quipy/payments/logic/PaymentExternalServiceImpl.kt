@@ -102,7 +102,8 @@ class PaymentExternalSystemAdapterImpl(
 
     private fun shortRetryAt(paymentId: UUID, now: Long): Long {
         val slot = Math.floorMod(paymentId.hashCode(), submissionRate)
-        return now + retryAfterMillis * (slot + 1L)
+        val jitterStepMillis = maxOf(10L, retryAfterMillis / 4)
+        return now + jitterStepMillis * (slot + 1L)
     }
 
     override fun releaseReservation(paymentId: UUID) {
