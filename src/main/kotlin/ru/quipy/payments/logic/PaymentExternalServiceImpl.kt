@@ -68,10 +68,10 @@ class PaymentExternalSystemAdapterImpl(
         val now = now()
         if (deadline - now <= shortDeadlineMillis) {
             val maxPending = ((deadline - now - shortProviderTailMillis) * submissionRate / 1_000)
-                .coerceAtLeast(0)
+                .coerceIn(0L, submissionRate.toLong())
             while (true) {
                 val pending = pendingPayments.get()
-                if (pending.toLong() >= maxPending) return reserveRetryAt(now)
+                if (pending.toLong() >= maxPending) return shortRetryAt(paymentId, now)
                 if (pendingPayments.compareAndSet(pending, pending + 1)) return null
             }
         }
@@ -98,6 +98,11 @@ class PaymentExternalSystemAdapterImpl(
             val retryAt = maxOf(earliest, current)
             if (nextRetryAt.compareAndSet(current, retryAt + retryAfterMillis)) return retryAt
         }
+    }
+
+    private fun shortRetryAt(paymentId: UUID, now: Long): Long {
+        val slot = Math.floorMod(paymentId.hashCode(), submissionRate)
+        return now + retryAfterMillis * (slot + 1L)
     }
 
     override fun releaseReservation(paymentId: UUID) {
