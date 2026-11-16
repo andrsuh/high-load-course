@@ -23,6 +23,7 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 
 class PaymentExternalSystemAdapterImpl(
@@ -54,6 +55,7 @@ class PaymentExternalSystemAdapterImpl(
     private val dispatchRateLimiter = SlidingWindowRateLimiter(submissionRate.toLong(), Duration.ofMillis(1_025))
     private val shortReservations = ConcurrentHashMap<UUID, SlidingWindowRateLimiter.Permit>()
     private val retryAfterMillis = (1_000L + submissionRate - 1) / submissionRate
+    private val nextRetryAt = AtomicLong()
     private val admissionRateLimiter = TokenBucketRateLimiter(
         submissionRate,
         parallelRequests,
@@ -64,8 +66,8 @@ class PaymentExternalSystemAdapterImpl(
     override fun tryReserve(paymentId: UUID, deadline: Long): Long? {
         val now = now()
         if (deadline - now <= shortDeadlineMillis) {
-            if (deadline - now < providerTailMillis + shortDispatchBudgetMillis) return now
-            if (!window.tryAcquire(0)) return now
+            if (deadline - now < providerTailMillis + shortDispatchBudgetMillis) return reserveRetryAt(now)
+            if (!window.tryAcquire(0)) return reserveRetryAt(now)
 
             val permit = try {
                 dispatchRateLimiter.reserveBlockingUntil(now() + 1)
@@ -75,7 +77,7 @@ class PaymentExternalSystemAdapterImpl(
             }
             if (permit == null) {
                 window.release()
-                return dispatchRateLimiter.retryAt()
+                return reserveRetryAt(now, dispatchRateLimiter.retryAt())
             }
 
             shortReservations[paymentId] = permit
@@ -85,12 +87,20 @@ class PaymentExternalSystemAdapterImpl(
         val maxPending = ((deadline - now - providerTailMillis) * submissionRate / 1_000).coerceAtLeast(1)
         while (true) {
             val pending = pendingPayments.get()
-            if (pending.toLong() >= maxPending) return now + retryAfterMillis
+            if (pending.toLong() >= maxPending) return reserveRetryAt(now)
             if (pendingPayments.compareAndSet(pending, pending + 1)) break
         }
         if (deadline - now >= burstDeadlineMillis || admissionRateLimiter.tick()) return null
         pendingPayments.decrementAndGet()
-        return now + retryAfterMillis
+        return reserveRetryAt(now)
+    }
+
+    private fun reserveRetryAt(now: Long, earliest: Long = now + retryAfterMillis): Long {
+        while (true) {
+            val current = nextRetryAt.get()
+            val retryAt = maxOf(earliest, current)
+            if (nextRetryAt.compareAndSet(current, retryAt + retryAfterMillis)) return retryAt
+        }
     }
 
     override fun releaseReservation(paymentId: UUID) {
