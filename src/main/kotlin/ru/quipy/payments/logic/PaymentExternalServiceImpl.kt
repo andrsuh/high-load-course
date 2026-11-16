@@ -20,7 +20,6 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -48,15 +47,14 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
     private val pendingPayments = AtomicInteger()
     private val processingBudgetMillis = requestAverageProcessingTime.toMillis()
+    private val shortProviderTailMillis = processingBudgetMillis + 100
     private val providerTailMillis = processingBudgetMillis * 2
     private val burstProviderTailMillis = processingBudgetMillis * 3
     private val shortDeadlineMillis = 3_000L
     private val burstDeadlineMillis = 20_000L
     private val burstQueueBudgetMillis = 20_000L
     private val burstQueueCapacity = submissionRate * burstQueueBudgetMillis / 1_000
-    private val shortDispatchBudgetMillis = 100L
     private val dispatchRateLimiter = SlidingWindowRateLimiter(submissionRate.toLong(), Duration.ofMillis(1_025))
-    private val shortReservations = ConcurrentHashMap<UUID, SlidingWindowRateLimiter.Permit>()
     private val retryAfterMillis = (1_000L + submissionRate - 1) / submissionRate
     private val nextRetryAt = AtomicLong()
     private val admissionRateLimiter = TokenBucketRateLimiter(
@@ -69,23 +67,13 @@ class PaymentExternalSystemAdapterImpl(
     override fun tryReserve(paymentId: UUID, deadline: Long): Long? {
         val now = now()
         if (deadline - now <= shortDeadlineMillis) {
-            if (deadline - now < providerTailMillis + shortDispatchBudgetMillis) return reserveRetryAt(now)
-            if (!window.tryAcquire(0)) return reserveRetryAt(now)
-
-            val permit = try {
-                dispatchRateLimiter.reserveBlockingUntil(now() + 1)
-            } catch (e: InterruptedException) {
-                window.release()
-                throw e
+            val maxPending = ((deadline - now - shortProviderTailMillis) * submissionRate / 1_000)
+                .coerceAtLeast(0)
+            while (true) {
+                val pending = pendingPayments.get()
+                if (pending.toLong() >= maxPending) return reserveRetryAt(now)
+                if (pendingPayments.compareAndSet(pending, pending + 1)) return null
             }
-            if (permit == null) {
-                window.release()
-                return reserveRetryAt(now, dispatchRateLimiter.retryAt())
-            }
-
-            shortReservations[paymentId] = permit
-            pendingPayments.incrementAndGet()
-            return null
         }
         val processingReserve = if (deadline - now >= burstDeadlineMillis) burstProviderTailMillis else providerTailMillis
         val deadlineCapacity = ((deadline - now - processingReserve) * submissionRate / 1_000).coerceAtLeast(1)
@@ -113,10 +101,6 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun releaseReservation(paymentId: UUID) {
-        shortReservations.remove(paymentId)?.let {
-            it.close()
-            window.release()
-        }
         pendingPayments.decrementAndGet()
     }
 
@@ -135,13 +119,17 @@ class PaymentExternalSystemAdapterImpl(
         .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        val reservedPermit = shortReservations.remove(paymentId)
-        var dispatchPermit = reservedPermit
-        var slotAcquired = reservedPermit != null
+        var dispatchPermit: SlidingWindowRateLimiter.Permit? = null
+        var slotAcquired = false
         var submitted = false
         val transactionId = UUID.randomUUID()
         val burstMode = deadline - paymentStartedAt >= burstDeadlineMillis
-        val processingReserve = if (burstMode) burstProviderTailMillis else providerTailMillis
+        val shortMode = deadline - paymentStartedAt <= shortDeadlineMillis
+        val processingReserve = when {
+            burstMode -> burstProviderTailMillis
+            shortMode -> shortProviderTailMillis
+            else -> providerTailMillis
+        }
         val latestSubmissionAt = deadline - processingReserve
 
         try {
@@ -161,32 +149,30 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
-            if (reservedPermit == null) {
-                if (burstMode) {
-                    dispatchPermit = dispatchRateLimiter.reserveBlockingUntil(latestSubmissionAt)
-                    if (dispatchPermit == null) {
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
-                        }
-                        return
-                    }
-                } else {
-                    if (!rateLimiter.reserveBlockingUntil(latestSubmissionAt)) {
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
-                        }
-                        return
-                    }
-                }
-
-                if (!window.tryAcquire(latestSubmissionAt - now())) {
+            if (burstMode) {
+                dispatchPermit = dispatchRateLimiter.reserveBlockingUntil(latestSubmissionAt)
+                if (dispatchPermit == null) {
                     paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for concurrent request slot")
+                        it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
                     }
                     return
                 }
-                slotAcquired = true
+            } else {
+                if (!rateLimiter.reserveBlockingUntil(latestSubmissionAt)) {
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for rate permit")
+                    }
+                    return
+                }
             }
+
+            if (!window.tryAcquire(latestSubmissionAt - now())) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded waiting for concurrent request slot")
+                }
+                return
+            }
+            slotAcquired = true
 
             if (now() > latestSubmissionAt) {
                 paymentESService.update(paymentId) {
