@@ -1,0 +1,80 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum by (le, service, accountName) (rate(payment_external_request_duration_milliseconds_bucket{service=~\"$service\"}[1m]))) / 1000", "legendFormat": "{{accountName}} p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.85, sum by (le, service, accountName) (rate(payment_external_request_duration_milliseconds_bucket{service=~\"$service\"}[1m]))) / 1000", "legendFormat": "{{accountName}} p85", "refId": "B" },
+        { "expr": "histogram_quantile(0.95, sum by (le, service, accountName) (rate(payment_external_request_duration_milliseconds_bucket{service=~\"$service\"}[1m]))) / 1000", "legendFormat": "{{accountName}} p95", "refId": "C" },
+        { "expr": "histogram_quantile(0.99, sum by (le, service, accountName) (rate(payment_external_request_duration_milliseconds_bucket{service=~\"$service\"}[1m]))) / 1000", "legendFormat": "{{accountName}} p99", "refId": "D" }
+      ],
+      "title": "Payment provider latency quantiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "sum by (service, accountName) (rate(payment_external_request_duration_milliseconds_sum{service=~\"$service\"}[1m])) / sum by (service, accountName) (rate(payment_external_request_duration_milliseconds_count{service=~\"$service\"}[1m])) / 1000", "legendFormat": "{{accountName}} average", "refId": "A" }
+      ],
+      "title": "Payment provider average latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "sum by (service, accountName) (rate(payment_external_retries_total{service=~\"$service\"}[1m]))", "legendFormat": "{{accountName}} retries", "refId": "A" }
+      ],
+      "title": "Payment retries per second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "sum by (service, accountName) (rate(payment_external_timeouts_total{service=~\"$service\"}[1m]))", "legendFormat": "{{accountName}} timeouts", "refId": "A" }
+      ],
+      "title": "Payment timeouts per second",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 40,
+  "tags": ["case-7", "timeouts", "quantiles"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "cas-m3404-05", "value": "cas-m3404-05" },
+        "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+        "definition": "label_values(payment_external_request_duration_milliseconds_count, service)",
+        "label": "service",
+        "name": "service",
+        "query": { "query": "label_values(payment_external_request_duration_milliseconds_count, service)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-15m", "to": "now" },
+  "timezone": "browser",
+  "title": "Case 7: latency, timeouts and retries",
+  "uid": "case-7-latency",
+  "version": 1
+}
