@@ -63,7 +63,7 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         }
 
         val deadlineTimeout = maxOf(0, deadline - createdAt)
-        if (!paymentLimiter.tickBlocking(Duration.ofSeconds(deadlineTimeout))) {
+        if (!paymentLimiter.tickBlocking(Duration.ofMillis(deadlineTimeout))) {
             throw TooManyRequestsException(createdAt + 100)
         }
 

@@ -1,6 +1,35 @@
 # Template for the HighLoad course
 This project is based on [Tiny Event Sourcing library](https://github.com/andrsuh/tiny-event-sourcing)
 
+### Case 7: local Windows run
+
+Requires Docker Desktop and Java 17+. Maven runs in Docker.
+Credentials are read from the existing `.env`.
+
+```powershell
+./scripts/start-local.ps1
+# Wait for http://localhost:8081/actuator/health to report UP.
+./scripts/test-local.ps1
+```
+
+The application uses `acc-7`, 5 requests/s, 1000 tests and a 6000 ms processing budget.
+Grafana: http://localhost:3000/d/highload-case7 (admin / quipy).
+Application logs: `local-app.log`.
+To change the default 2500 ms HTTP timeout, stop the application PID printed by
+start-local and run `./scripts/start-local.ps1 -SkipBuild -HttpTimeoutMs 2000`.
+Choose the final timeout from measured latency and test outcomes.
+The actual HTTP call timeout is also bounded by the remaining payment deadline.
+
+Metrics: `payment_retries_total` counts extra attempts;
+`payment_http_duration_seconds` exposes p50/p80/p95/p99 per account and status,
+including `status="timeout"`. HTTP timing excludes semaphore/rate-limiter waiting
+and event-store updates. These durations use seconds.
+A timed-out measurement does not reveal how long the provider would have taken
+to finish. Compare successful throughput and cost as well.
+
+Observed local case 7 result at 2500 ms: 997 successful operations and 3 failures
+out of 1000. Outcomes vary between runs.
+
 ### Run PostgreSql
 This example uses Postgres as an implementation of the Event store. You can see it in `pom.xml`:
 

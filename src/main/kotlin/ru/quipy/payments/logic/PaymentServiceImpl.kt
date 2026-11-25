@@ -18,7 +18,7 @@ import kotlin.concurrent.withLock
 @Service
 class PaymentSystemImpl(
     private val paymentAccounts: List<PaymentExternalSystemAdapter>,
-    meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry
 ) : PaymentService {
     companion object {
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
@@ -33,13 +33,21 @@ class PaymentSystemImpl(
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         for (account in paymentAccounts) {
             for (i in 1..10) {
+                if (now() >= deadline) break
+                if (i > 1) {
+                    val delay = 10L * (i - 1)
+                    if (now() + delay >= deadline) break
+                    Thread.sleep(delay)
+                    if (now() >= deadline) break
+                    meterRegistry.counter("payment_retries", "account", account.name()).increment()
+                }
                 val res = account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
-                if (res) {
+                if (res.success) {
                     successCounter.increment()
                     break
                 } else {
                     failCounter.increment()
-                    Thread.sleep((10 * i).toLong())
+                    if (!res.retryable) break
                 }
             }
         }

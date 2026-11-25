@@ -32,7 +32,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana:13.3.2
     user: root
     volumes:
       - ./grafana/data:/var/lib/grafana
@@ -40,6 +40,8 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=quipy
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_PLUGINS_PREINSTALL_DISABLED=true
+      - GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false
     ports:
       - 3000:3000
     depends_on:
