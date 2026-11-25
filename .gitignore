@@ -38,6 +38,7 @@ http-client.env.json
 grafana/data/*
 prometheus/data/*
 # Local runtime data and logs
+.env
 *.log
 prometheus/data/
 grafana/data/

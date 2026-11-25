@@ -5,6 +5,8 @@ This project is based on [Tiny Event Sourcing library](https://github.com/andrsu
 
 Requires Docker Desktop and Java 17+. Maven runs in Docker.
 Credentials are read from the existing `.env`.
+On a fresh checkout, copy `.env.example` to `.env` and fill in
+`PAYMENT_SERVICE_NAME` and `PAYMENT_TOKEN`. The local `.env` is ignored by Git.
 
 ```powershell
 ./scripts/start-local.ps1
