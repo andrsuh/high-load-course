@@ -36,6 +36,7 @@ class PaymentExternalSystemAdapterImpl(
         .retryOnConnectionFailure(false).readTimeout(Duration.ZERO).build(),
     private val providerTimeoutCapMillis: Long = 0,
     private val localTimeoutRetry: Boolean = false,
+    localTimeoutRetryHosts: Set<String> = emptySet(),
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -78,7 +79,10 @@ class PaymentExternalSystemAdapterImpl(
         require(resultPersistenceReserveMillis >= 0)
         require(providerTimeoutCapMillis >= 0)
         if (localTimeoutRetry) {
-            require(URI("http://$paymentProviderHostPort").host in setOf("localhost", "127.0.0.1", "[::1]"))
+            val providerHost = URI("http://$paymentProviderHostPort").host?.lowercase(Locale.ROOT)
+            require(providerHost in localTimeoutRetryHosts) {
+                "Provider host '$providerHost' is not listed in payment.provider.local-timeout-retry-hosts"
+            }
             require(providerTimeoutCapMillis > 0)
             logger.info("[$accountName] Local simulator timeout retry enabled")
         }

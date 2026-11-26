@@ -77,7 +77,9 @@ class PaymentAccountsConfig {
                     providerTimeoutCapMillis = timeoutCapMillis,
                     localTimeoutRetry = timeoutCapMillis > 0 && environment.getProperty(
                         "payment.provider.local-timeout-retry", Boolean::class.java, false
-                    )
+                    ),
+                    localTimeoutRetryHosts = environment.getProperty("payment.provider.local-timeout-retry-hosts", "")
+                        .split(',').map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }.toSet()
                 )
             }
     }
