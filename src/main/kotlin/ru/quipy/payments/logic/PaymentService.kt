@@ -56,3 +56,19 @@ class ExternalSysResponse(
     val result: Boolean,
     val message: String? = null,
 )
+
+data class ExternalSysBulkRequest(
+    val serviceName: String,
+    val accountName: String,
+    val requests: List<ExternalSysPaymentRequest>,
+)
+
+data class ExternalSysPaymentRequest(
+    val transactionId: String,
+    val paymentId: String,
+    val amount: Int,
+)
+
+class ExternalSysBulkResponse(
+    val responses: List<ExternalSysResponse>,
+)
