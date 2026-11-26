@@ -13,6 +13,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Response
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
@@ -21,6 +22,8 @@ import java.io.IOException
 import java.io.InterruptedIOException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
@@ -44,9 +47,10 @@ class PaymentExternalSystemAdapterImpl(
         private const val ESTIMATE_SAFETY_FACTOR = 1.1
 
         private const val MIN_LATENCY_SAMPLES = 50
-        private const val COLD_START_LATENCY_FACTOR = 1.5
+        private const val COLD_START_LATENCY_FACTOR = 1.2
         private const val LATENCY_ESTIMATE_REFRESH_MS = 200
         private const val RATE_WINDOW_MARGIN_MS = 20L
+        private const val MAX_RETRIES = 10
     }
 
     private val serviceName = properties.serviceName
@@ -62,6 +66,15 @@ class PaymentExternalSystemAdapterImpl(
 
     private val ongoingWindow = OngoingWindow(parallelRequests)
     private val rateWaiters = ReentrantLock(true)
+    private val retryExecutor = ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue<Runnable>(parallelRequests),
+        NamedThreadFactory("payment-retry-$accountName"),
+        ThreadPoolExecutor.AbortPolicy(),
+    )
 
     private val effectiveParallel = maxOf(
         1,
@@ -139,7 +152,17 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        val transactionId = UUID.randomUUID()
+        performPaymentAttempt(paymentId, amount, paymentStartedAt, deadline, UUID.randomUUID(), MAX_RETRIES)
+    }
+
+    private fun performPaymentAttempt(
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long,
+        transactionId: UUID,
+        retriesRemaining: Int,
+    ) {
         var acquired = false
         var granted = false
         var handedOff = false
@@ -181,12 +204,27 @@ class PaymentExternalSystemAdapterImpl(
             call.enqueue(object : Callback {
                 override fun onResponse(call: Call, response: Response) {
                     providerLatency.record(now() - sentAt, TimeUnit.MILLISECONDS)
+                    var attemptReleased = false
+                    var retryScheduled = false
                     try {
-                        response.use { handleResponse(it, transactionId, paymentId) }
+                        val body = response.use { readResponse(it, transactionId, paymentId) }
+                        if (!body.result && response.isSuccessful && retriesRemaining > 0 && waitBudget(deadline) > 0) {
+                            releaseAttempt()
+                            attemptReleased = true
+                            retryExecutor.execute {
+                                performPaymentAttempt(paymentId, amount, paymentStartedAt, deadline, transactionId, retriesRemaining - 1)
+                            }
+                            retryScheduled = true
+                        } else {
+                            paymentESService.update(paymentId) {
+                                it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                            }
+                        }
                     } catch (e: Exception) {
                         handleFailure(e, transactionId, paymentId)
                     } finally {
-                        complete()
+                        if (!attemptReleased) releaseAttempt()
+                        if (!retryScheduled) releaseReservation()
                     }
                 }
 
@@ -214,32 +252,34 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override fun close() {
+        retryExecutor.shutdown()
         client.dispatcher.cancelAll()
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()
     }
 
     private fun complete() {
-        rateGranted.decrementAndGet()
-        ongoingWindow.release()
+        releaseAttempt()
         releaseReservation()
     }
 
-    private fun handleResponse(response: Response, transactionId: UUID, paymentId: UUID) {
+    private fun releaseAttempt() {
+        rateGranted.decrementAndGet()
+        ongoingWindow.release()
+    }
+
+    private fun readResponse(response: Response, transactionId: UUID, paymentId: UUID): ExternalSysResponse {
+        val responseBody = response.body?.string()
         val body = try {
-            mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+            mapper.readValue(responseBody, ExternalSysResponse::class.java)
         } catch (e: Exception) {
-            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: $responseBody")
+            throw e
         }
 
         logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
-        // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-        // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-        paymentESService.update(paymentId) {
-            it.logProcessing(body.result, now(), transactionId, reason = body.message)
-        }
+        return body
     }
 
     private fun handleFailure(e: Exception, transactionId: UUID, paymentId: UUID) {
