@@ -36,9 +36,9 @@ class OrderPayer {
         CallerBlockingRejectedExecutionHandler()
     )
 
-    fun tryReserve(deadline: Long) = paymentService.tryReserve(deadline)
+    fun tryReserve(paymentId: UUID, deadline: Long) = paymentService.tryReserve(paymentId, deadline)
 
-    fun releaseReservation() = paymentService.releaseReservation()
+    fun releaseReservation(paymentId: UUID) = paymentService.releaseReservation(paymentId)
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
@@ -55,7 +55,7 @@ class OrderPayer {
 
                 paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
             } finally {
-                paymentService.releaseReservation()
+                paymentService.releaseReservation(paymentId)
             }
         }
         return createdAt

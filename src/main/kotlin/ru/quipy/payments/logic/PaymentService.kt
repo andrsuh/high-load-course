@@ -9,9 +9,9 @@ interface PaymentService {
      */
     fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
 
-    fun tryReserve(deadline: Long): Long?
+    fun tryReserve(paymentId: UUID, deadline: Long): Long?
 
-    fun releaseReservation()
+    fun releaseReservation(paymentId: UUID)
 }
 
 /**
@@ -23,9 +23,9 @@ interface PaymentService {
 interface PaymentExternalSystemAdapter {
     fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
 
-    fun tryReserve(deadline: Long): Long?
+    fun tryReserve(paymentId: UUID, deadline: Long): Long?
 
-    fun releaseReservation()
+    fun releaseReservation(paymentId: UUID)
 
     fun name(): String
 
@@ -55,4 +55,20 @@ class ExternalSysResponse(
     val paymentId: String,
     val result: Boolean,
     val message: String? = null,
+)
+
+data class ExternalSysBulkRequest(
+    val serviceName: String,
+    val accountName: String,
+    val requests: List<ExternalSysPaymentRequest>,
+)
+
+data class ExternalSysPaymentRequest(
+    val transactionId: String,
+    val paymentId: String,
+    val amount: Int,
+)
+
+class ExternalSysBulkResponse(
+    val responses: List<ExternalSysResponse>,
 )
