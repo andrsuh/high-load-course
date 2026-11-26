@@ -18,7 +18,8 @@ target/
 *.iws
 *.iml
 *.ipr
-./http-client.env.json
+/http-client.env.json
+app-hw07*.log
 
 ### NetBeans ###
 /nbproject/private/

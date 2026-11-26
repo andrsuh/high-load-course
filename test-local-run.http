@@ -24,6 +24,19 @@ Content-Type: application/json
   "processingTimeMillis": 3500
 }
 
+### hw-7
+POST http://localhost:1234/test/run
+Content-Type: application/json
+
+{
+  "serviceName": "{{serviceName}}",
+  "token": "{{token}}",
+  "accounts": "acc-7",
+  "ratePerSecond": 5,
+  "testCount": 1000,
+  "processingTimeMillis": 6000
+}
+
 ### Stop running test to save time and resources
 # @timeout 120
 POST http://localhost:1234/test/stop/{{serviceName}}
