@@ -3613,6 +3613,39 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 1004,
+      "type": "timeseries",
+      "title": "Provider dispatch budget vs successful response time",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.05, sum by (le, service, account, outcome) (rate(payment_provider_dispatch_budget_seconds_bucket{job=\"online-store-job\",service=~\"$service\"}[$__rate_interval])))",
+          "refId": "A",
+          "legendFormat": "p05 budget {{service}} {{account}} {{outcome}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, service, account) (rate(payment_provider_success_duration_seconds_bucket{job=\"online-store-job\",service=~\"$service\"}[$__rate_interval])))",
+          "refId": "B",
+          "legendFormat": "p99 successful response {{service}} {{account}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
     }
   ],
   "preload": false,

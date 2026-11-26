@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.env.Environment
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.*
@@ -39,6 +40,7 @@ class PaymentAccountsConfig {
     @Bean
     fun accountAdapters(
         meterRegistry: MeterRegistry,
+        environment: Environment,
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
         @Value("\${payment.retry.max-attempts}") maxAttempts: Int,
         @Value("\${payment.retry.delay-millis}") retryDelayMillis: Long,
@@ -60,6 +62,9 @@ class PaymentAccountsConfig {
             .map { it.copy(enabled = true) }
             .onEach(::println)
             .map {
+                val timeoutCapMillis = environment.getProperty(
+                    "payment.provider.timeout-cap-millis.${it.accountName}", Long::class.java, 0L
+                )
                 PaymentExternalSystemAdapterImpl(
                     it,
                     paymentService,
@@ -68,7 +73,11 @@ class PaymentAccountsConfig {
                     meterRegistry,
                     maxAttempts,
                     retryDelayMillis,
-                    resultPersistenceReserveMillis
+                    resultPersistenceReserveMillis,
+                    providerTimeoutCapMillis = timeoutCapMillis,
+                    localTimeoutRetry = timeoutCapMillis > 0 && environment.getProperty(
+                        "payment.provider.local-timeout-retry", Boolean::class.java, false
+                    )
                 )
             }
     }
