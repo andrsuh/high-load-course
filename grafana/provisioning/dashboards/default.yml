@@ -5,5 +5,4 @@ providers:
     folder: bombardier # The folder where to place the dashboards
     type: file
     options:
-      path:
-        /etc/grafana/provisioning/dashboards/ServicesStatistic.json
+      path: /etc/grafana/provisioning/dashboards
