@@ -59,13 +59,13 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
-        orderPayer.tryReserve(deadline)?.let {
+        val paymentId = UUID.randomUUID()
+        orderPayer.tryReserve(paymentId, deadline)?.let {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header(HttpHeaders.RETRY_AFTER, it.toString())
                 .build()
         }
 
-        val paymentId = UUID.randomUUID()
         return try {
             val order = orderRepository.findById(orderId)?.let {
                 orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
@@ -74,7 +74,7 @@ class APIController {
             val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
             ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
         } catch (e: Exception) {
-            orderPayer.releaseReservation()
+            orderPayer.releaseReservation(paymentId)
             throw e
         }
     }

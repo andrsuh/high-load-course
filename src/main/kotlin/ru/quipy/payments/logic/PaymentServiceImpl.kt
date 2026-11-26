@@ -27,7 +27,7 @@ class PaymentSystemImpl(
         }
     }
 
-    override fun tryReserve(deadline: Long): Long? = paymentAccounts.first { it.isEnabled() }.tryReserve(deadline)
+    override fun tryReserve(paymentId: UUID, deadline: Long): Long? = paymentAccounts.first { it.isEnabled() }.tryReserve(paymentId, deadline)
 
-    override fun releaseReservation() = paymentAccounts.first { it.isEnabled() }.releaseReservation()
+    override fun releaseReservation(paymentId: UUID) = paymentAccounts.first { it.isEnabled() }.releaseReservation(paymentId)
 }
