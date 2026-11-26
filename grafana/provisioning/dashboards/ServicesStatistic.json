@@ -126,7 +126,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(rate(payment_finished_total{service=~\"$service\"}[30s])) by (service, outcome, failReason)",
+              "expr": "sum(rate(payment_finished_total{job!=\"bombardier-host-job\",service=~\"$service\"}[30s])) by (service, outcome, failReason)",
               "hide": false,
               "instant": false,
               "legendFormat": "{{outcome}} - {{failReason}}",
@@ -225,7 +225,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum by (type) (rate(events_total{}[30s]))",
+              "expr": "sum by (type) (rate(events_total{job!=\"bombardier-host-job\"}[30s]))",
               "interval": "",
               "legendFormat": "{{type}}",
               "range": true,
@@ -323,10 +323,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service))",
+              "expr": "sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service) / (sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service) + sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service))",
               "hide": false,
               "instant": false,
-              "legendFormat": "income - {{service}}",
+              "legendFormat": "income",
               "range": true,
               "refId": "B"
             },
@@ -336,10 +336,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service))",
+              "expr": "sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service) / (sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service) + sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service))",
               "hide": false,
               "instant": false,
-              "legendFormat": "expenses - {{service}} ",
+              "legendFormat": "expenses",
               "range": true,
               "refId": "A"
             }
@@ -407,10 +407,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service))",
+              "expr": "sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service) / (sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service) + sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service))",
               "hide": false,
               "instant": false,
-              "legendFormat": "income - {{service}}",
+              "legendFormat": "income",
               "range": true,
               "refId": "B"
             },
@@ -420,10 +420,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service))",
+              "expr": "sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service) / (sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service) + sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service))",
               "hide": false,
               "instant": false,
-              "legendFormat": "expenses - {{service}} ",
+              "legendFormat": "expenses",
               "range": true,
               "refId": "A"
             }
@@ -521,10 +521,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service)",
+              "expr": "sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service)",
               "hide": false,
               "instant": false,
-              "legendFormat": "income - {{service}}",
+              "legendFormat": "income",
               "range": true,
               "refId": "B"
             },
@@ -534,10 +534,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service, accountName) ",
+              "expr": "sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service, accountName) ",
               "hide": false,
               "instant": false,
-              "legendFormat": "expenses - {{service}} - {{accountName}}",
+              "legendFormat": "expenses - {{accountName}}",
               "range": true,
               "refId": "A"
             }
@@ -605,10 +605,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service)",
+              "expr": "sum(increase(payments_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service)",
               "hide": false,
               "instant": false,
-              "legendFormat": "income - {{service}}",
+              "legendFormat": "income",
               "range": true,
               "refId": "B"
             },
@@ -618,10 +618,10 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service, accountName) ",
+              "expr": "sum(increase(external_amount_total{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service, accountName) ",
               "hide": false,
               "instant": false,
-              "legendFormat": "expenses - {{service}} - {{accountName}}",
+              "legendFormat": "expenses - {{accountName}}",
               "range": true,
               "refId": "A"
             }
@@ -730,9 +730,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum(increase(test_duration_count{service=~\"$service\"}[$__range])) by (service, testOutcome)",
+              "expr": "sum(increase(test_duration_count{job!=\"bombardier-host-job\",service=~\"$service\"}[$__range])) by (service, testOutcome)",
               "interval": "",
-              "legendFormat": "{{service}} - {{testOutcome}}",
+              "legendFormat": "{{testOutcome}}",
               "range": true,
               "refId": "A"
             }
@@ -866,9 +866,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "(sum by(service)(increase(test_duration_count{service=~\"$service\", testOutcome=~\"SUCCESS\"}[1m]))) / (sum by(service) (increase(test_duration_count{service=~\"$service\", testOutcome=~\".*\"}[1m])))",
+              "expr": "(sum by(service)(increase(test_duration_count{job!=\"bombardier-host-job\",service=~\"$service\", testOutcome=~\"SUCCESS\"}[1m]))) / (sum by(service) (increase(test_duration_count{job!=\"bombardier-host-job\",service=~\"$service\", testOutcome=~\".*\"}[1m])))",
               "interval": "",
-              "legendFormat": "{{service}} - success",
+              "legendFormat": "success",
               "range": true,
               "refId": "A"
             }
@@ -965,9 +965,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum(rate(test_duration_sum{service=~\"$service\"}[1m])) by (service, testOutcome) / sum by (service, testOutcome) (rate(test_duration_count{service=~\"$service\"}[1m]))",
+              "expr": "sum(rate(test_duration_sum{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])) by (service, testOutcome) / sum by (service, testOutcome) (rate(test_duration_count{job!=\"bombardier-host-job\",service=~\"$service\"}[1m]))",
               "interval": "",
-              "legendFormat": "{{service}} - {{testOutcome}}",
+              "legendFormat": "{{testOutcome}}",
               "range": true,
               "refId": "A"
             }
@@ -1113,7 +1113,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum(increase(stage_duration_ok_count{service=~\"$service\", result=\"success\"}[1m])) by (stage)",
+              "expr": "sum(increase(stage_duration_ok_count{job!=\"bombardier-host-job\",service=~\"$service\", result=\"success\"}[1m])) by (stage)",
               "interval": "",
               "legendFormat": "{{stage}}",
               "range": true,
@@ -1248,7 +1248,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum(increase(stage_duration_ok_count{service=~\"$service\", result=\"failed\"}[1m])) by (stage)",
+              "expr": "sum(increase(stage_duration_ok_count{job!=\"bombardier-host-job\",service=~\"$service\", result=\"failed\"}[1m])) by (stage)",
               "interval": "",
               "legendFormat": "{{stage}}",
               "range": true,
@@ -1346,7 +1346,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(stage_duration_ok_sum{service=~\"$service\", result=\"success\"}[1m]) / rate(stage_duration_ok_count{service=~\"$service\", result=\"success\"}[1m])",
+              "expr": "rate(stage_duration_ok_sum{job!=\"bombardier-host-job\",service=~\"$service\", result=\"success\"}[1m]) / rate(stage_duration_ok_count{job!=\"bombardier-host-job\",service=~\"$service\", result=\"success\"}[1m])",
               "interval": "",
               "legendFormat": "{{stage}}",
               "range": true,
@@ -1507,7 +1507,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum(rate(http_external_duration_count{service=~\"$service\"}[30s])) by (method)",
+              "expr": "sum(rate(http_external_duration_count{job!=\"bombardier-host-job\",service=~\"$service\"}[30s])) by (method)",
               "hide": false,
               "interval": "",
               "legendFormat": "{{method}}",
@@ -1645,7 +1645,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(http_external_duration_sum{service=~\"$service\"}[1m]) / rate(http_external_duration_count{service=~\"$service\"}[1m])",
+              "expr": "rate(http_external_duration_sum{job!=\"bombardier-host-job\",service=~\"$service\"}[1m]) / rate(http_external_duration_count{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])",
               "hide": false,
               "interval": "",
               "legendFormat": "{{method}} - {{result}}",
@@ -1783,7 +1783,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(external_sys_duration_count{service=~\"$service\"}[30s])",
+              "expr": "rate(external_sys_duration_count{job!=\"bombardier-host-job\",service=~\"$service\"}[30s])",
               "hide": false,
               "interval": "",
               "legendFormat": "{{accountName}} - {{outcome}}",
@@ -1921,7 +1921,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(external_sys_duration_sum{service=~\"$service\"}[1m]) / rate(external_sys_duration_count{service=~\"$service\"}[1m])",
+              "expr": "rate(external_sys_duration_sum{job!=\"bombardier-host-job\",service=~\"$service\"}[1m]) / rate(external_sys_duration_count{job!=\"bombardier-host-job\",service=~\"$service\"}[1m])",
               "hide": false,
               "interval": "",
               "legendFormat": "{{accountName}} - {{outcome}}",
@@ -1996,7 +1996,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(payment_admission_rejected_total{service=~\"$service\"})",
+              "expr": "sum(payment_admission_rejected_total{job!=\"bombardier-host-job\",service=~\"$service\"})",
               "legendFormat": "rejected (429)",
               "range": true,
               "refId": "A"
@@ -2155,7 +2155,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "rate(http_request_latent_sum{service=~\"$service\"}[15s]) / rate(http_request_latent_count{service=~\"$service\"}[15s])",
+              "expr": "rate(http_request_latent_sum{job!=\"bombardier-host-job\",service=~\"$service\"}[15s]) / rate(http_request_latent_count{job!=\"bombardier-host-job\",service=~\"$service\"}[15s])",
               "hide": false,
               "instant": false,
               "legendFormat": "{{method}} - {{result}}",
@@ -2164,6 +2164,91 @@
             }
           ],
           "title": "(Test system -> Online shop)  Average request latent time (before submit)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "Repeated calls to the payment provider in the preceding minute, grouped by service and account.",
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 116
+          },
+          "id": 102,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum by (service, account) (increase(payment_provider_retries_total{job!=\"bombardier-host-job\",service=~\"$service\"}[1m]))",
+              "legendFormat": "{{account}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Payment provider retries per minute",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "Request duration measured by the shop. The average includes all calls, and p95 is shown separately for responses and failed calls, including timeouts.",
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 116
+          },
+          "id": 103,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum without (outcome) (rate(payment_provider_duration_seconds_sum{job!=\"bombardier-host-job\",service=~\"$service\"}[$__rate_interval])) / sum without (outcome) (rate(payment_provider_duration_seconds_count{job!=\"bombardier-host-job\",service=~\"$service\"}[$__rate_interval]))",
+              "legendFormat": "Average / {{account}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "payment_provider_duration_seconds{job!=\"bombardier-host-job\",service=~\"$service\", quantile=\"0.95\"}",
+              "legendFormat": "p95 / {{outcome}} / {{account}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Payment provider request duration",
           "type": "timeseries"
         }
       ],
@@ -2268,7 +2353,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "max by (name) (executor_queued_tasks{service=~\"$service\"})",
+              "expr": "max by (name) (executor_queued_tasks{job!=\"bombardier-host-job\",service=~\"$service\"})",
               "interval": "",
               "legendFormat": "{{name}}",
               "range": true,
@@ -2366,7 +2451,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum by (name) (rate(executor_completed_tasks_total{}[1m]))",
+              "expr": "sum by (name) (rate(executor_completed_tasks_total{job!=\"bombardier-host-job\"}[1m]))",
               "interval": "",
               "legendFormat": "{{name}}",
               "range": true,
@@ -2464,7 +2549,7 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "sum by (name) (executor_active_threads{})",
+              "expr": "sum by (name) (executor_active_threads{job!=\"bombardier-host-job\"})",
               "interval": "",
               "legendFormat": "{{name}}",
               "range": true,
@@ -2572,7 +2657,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum ((sum by (job, area) (jvm_memory_used_bytes{area=\"heap\"}) / sum by (job, area) (jvm_memory_max_bytes{area=\"heap\"})) * 100) by (job)",
+              "expr": "sum ((sum by (job, area) (jvm_memory_used_bytes{job!=\"bombardier-host-job\",area=\"heap\"}) / sum by (job, area) (jvm_memory_max_bytes{job!=\"bombardier-host-job\",area=\"heap\"})) * 100) by (job)",
               "instant": false,
               "legendFormat": "{{job}}",
               "range": true,
@@ -2666,7 +2751,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (jvm_threads_live_threads{})",
+              "expr": "sum by (job) (jvm_threads_live_threads{job!=\"bombardier-host-job\"})",
               "instant": false,
               "legendFormat": "{{job}}",
               "range": true,
@@ -2767,7 +2852,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (system_cpu_usage{service=~\"$service\"})",
+              "expr": "sum by (job) (system_cpu_usage{job!=\"bombardier-host-job\",service=~\"$service\"})",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{job}} - System CPU Usage",
@@ -2780,7 +2865,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (process_cpu_usage{service=~\"$service\"})",
+              "expr": "sum by (job) (process_cpu_usage{job!=\"bombardier-host-job\",service=~\"$service\"})",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{job}} -Process CPU Usage",
@@ -2875,7 +2960,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(rate(jvm_gc_pause_seconds_sum{}[5m])) by (job)",
+              "expr": "sum(rate(jvm_gc_pause_seconds_sum{job!=\"bombardier-host-job\"}[5m])) by (job)",
               "instant": false,
               "legendFormat": "{{job}}",
               "range": true,
@@ -2969,7 +3054,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (process_files_open_files{})",
+              "expr": "sum by (job) (process_files_open_files{job!=\"bombardier-host-job\"})",
               "instant": false,
               "legendFormat": "{{job}}",
               "range": true,
@@ -3083,7 +3168,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (jetty_threads_config_max{})",
+              "expr": "sum by (job) (jetty_threads_config_max{job!=\"bombardier-host-job\"})",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -3185,7 +3270,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (jetty_threads_config_min{service=~\"$service\"})",
+              "expr": "sum by (job) (jetty_threads_config_min{job!=\"bombardier-host-job\",service=~\"$service\"})",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -3288,7 +3373,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (jetty_threads_busy{})",
+              "expr": "sum by (job) (jetty_threads_busy{job!=\"bombardier-host-job\"})",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -3302,7 +3387,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (jetty_threads_idle{})",
+              "expr": "sum by (job) (jetty_threads_idle{job!=\"bombardier-host-job\"})",
               "interval": "",
               "legendFormat": "{{job}} - idle",
               "range": true,
@@ -3314,7 +3399,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (jetty_threads_current{})",
+              "expr": "sum by (job) (jetty_threads_current{job!=\"bombardier-host-job\"})",
               "interval": "",
               "legendFormat": "{{job}} - current",
               "range": true,
@@ -3326,7 +3411,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job) (jetty_threads_jobs{})",
+              "expr": "sum by (job) (jetty_threads_jobs{job!=\"bombardier-host-job\"})",
               "interval": "",
               "legendFormat": "{{job}} - jobs",
               "range": true,
@@ -3425,7 +3510,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "irate(http_server_requests_seconds_count{service=~\"$service\", uri!~\".*actuator.*\"}[5m])",
+              "expr": "irate(http_server_requests_seconds_count{job!=\"bombardier-host-job\",service=~\"$service\", uri!~\".*actuator.*\"}[5m])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{method}} [{{status}}] - {{uri}}",
@@ -3527,7 +3612,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum by (job, method, status, uri) (irate(http_server_requests_seconds_sum{service=~\"$service\", exception=\"None\", uri!~\".*actuator.*\"}[5m]) / irate(http_server_requests_seconds_count{service=~\"$service\", exception=\"None\", uri!~\".*actuator.*\"}[5m]))",
+              "expr": "sum by (job, method, status, uri) (irate(http_server_requests_seconds_sum{job!=\"bombardier-host-job\",service=~\"$service\", exception=\"None\", uri!~\".*actuator.*\"}[5m]) / irate(http_server_requests_seconds_count{job!=\"bombardier-host-job\",service=~\"$service\", exception=\"None\", uri!~\".*actuator.*\"}[5m]))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{method}} [{{status}}] - {{uri}} - {{job}}",
