@@ -23,6 +23,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
 
 
 // Advice: always treat time as a Duration
@@ -40,12 +41,12 @@ class PaymentExternalSystemAdapterImpl(
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
 
-        // Processing time is not constant, so the completion estimate is inflated a bit
         private const val ESTIMATE_SAFETY_FACTOR = 1.1
 
         private const val MIN_LATENCY_SAMPLES = 50
         private const val COLD_START_LATENCY_FACTOR = 1.5
         private const val LATENCY_ESTIMATE_REFRESH_MS = 200
+        private const val RATE_WINDOW_MARGIN_MS = 20L
     }
 
     private val serviceName = properties.serviceName
@@ -54,11 +55,13 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
+    private val rateWindow = Duration.ofMillis(1_000 + RATE_WINDOW_MARGIN_MS)
     private val rateLimiter = SlidingWindowRateLimiter(
         rateLimitPerSec.toLong(),
-        Duration.ofSeconds(1))
+        rateWindow)
 
     private val ongoingWindow = OngoingWindow(parallelRequests)
+    private val rateWaiters = ReentrantLock(true)
 
     private val effectiveParallel = maxOf(
         1,
@@ -73,12 +76,8 @@ class PaymentExternalSystemAdapterImpl(
         .connectionPool(ConnectionPool(effectiveParallel * 2, 5, TimeUnit.MINUTES))
         .build()
 
-    private val throughputPerMs = minOf(
-        rateLimitPerSec / 1000.0,
-        parallelRequests.toDouble() / requestAverageProcessingTime.toMillis()
-    )
-
     private val inSystem = AtomicInteger()
+    private val rateGranted = AtomicInteger()
 
     private val providerLatency = Timer.builder("payment.provider.duration")
         .tag("account", accountName)
@@ -106,8 +105,16 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun tryReserve(deadline: Long): Boolean {
         val position = inSystem.incrementAndGet()
-        val queueWaitMs = maxOf(0, position - effectiveParallel) / throughputPerMs
-        val expectedCompletion = now() + (queueWaitMs + processingEstimateMs()) * ESTIMATE_SAFETY_FACTOR
+        val processingMs = processingEstimateMs().coerceAtLeast(1)
+        val throughputPerMs = minOf(
+            rateLimitPerSec.toDouble() / rateWindow.toMillis(),
+            parallelRequests.toDouble() / processingMs
+        )
+        val queueWaitMs = maxOf(
+            maxOf(0, position - effectiveParallel) / throughputPerMs,
+            rateLimiter.estimatedDelayMillis(maxOf(1, position - rateGranted.get())).toDouble()
+        )
+        val expectedCompletion = now() + (queueWaitMs + processingMs) * ESTIMATE_SAFETY_FACTOR
         if (expectedCompletion > deadline) {
             inSystem.decrementAndGet()
             return false
@@ -121,9 +128,20 @@ class PaymentExternalSystemAdapterImpl(
 
     private fun waitBudget(deadline: Long) = deadline - now() - processingEstimateMs()
 
+    private fun awaitRate(deadline: Long): Boolean {
+        val budget = waitBudget(deadline)
+        if (budget <= 0 || !rateWaiters.tryLock(budget, TimeUnit.MILLISECONDS)) return false
+        return try {
+            rateLimiter.tickBlocking(waitBudget(deadline))
+        } finally {
+            rateWaiters.unlock()
+        }
+    }
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         val transactionId = UUID.randomUUID()
         var acquired = false
+        var granted = false
         var handedOff = false
 
         try {
@@ -145,12 +163,14 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
 
-            if (!rateLimiter.tickBlocking(waitBudget(deadline))) {
+            if (!awaitRate(deadline)) {
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Payment deadline exceeded.")
                 }
                 return
             }
+            rateGranted.incrementAndGet()
+            granted = true
 
             logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
@@ -184,6 +204,7 @@ class PaymentExternalSystemAdapterImpl(
             handleFailure(e, transactionId, paymentId)
         } finally {
             if (!handedOff) {
+                if (granted) rateGranted.decrementAndGet()
                 if (acquired) {
                     ongoingWindow.release()
                 }
@@ -192,7 +213,14 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
+    override fun close() {
+        client.dispatcher.cancelAll()
+        client.dispatcher.executorService.shutdown()
+        client.connectionPool.evictAll()
+    }
+
     private fun complete() {
+        rateGranted.decrementAndGet()
         ongoingWindow.release()
         releaseReservation()
     }

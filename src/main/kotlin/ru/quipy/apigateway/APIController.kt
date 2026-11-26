@@ -4,8 +4,8 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import org.springframework.web.server.ResponseStatusException
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.util.*
@@ -57,17 +57,18 @@ class APIController {
         PAID,
     }
 
+    @ExceptionHandler(RejectedExecutionException::class)
+    fun paymentRejected(): ResponseEntity<Void> = ResponseEntity
+        .status(HttpStatus.TOO_MANY_REQUESTS)
+        .build()
+
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)
             ?: throw IllegalArgumentException("No such order $orderId")
 
-        val createdAt = try {
-            orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        } catch (exception: RejectedExecutionException) {
-            throw ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Payment processing capacity is exhausted")
-        }
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         orderRepository.save(order.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
         return PaymentSubmissionDto(createdAt, paymentId)
     }

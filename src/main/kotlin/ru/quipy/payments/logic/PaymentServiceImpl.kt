@@ -1,5 +1,6 @@
 package ru.quipy.payments.logic
 
+import jakarta.annotation.PreDestroy
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.util.*
@@ -11,6 +12,11 @@ class PaymentSystemImpl(
 ) : PaymentService {
     companion object {
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
+    }
+
+    @PreDestroy
+    fun close() {
+        paymentAccounts.forEach { it.close() }
     }
 
     override fun tryReserve(deadline: Long): Boolean {

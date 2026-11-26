@@ -54,30 +54,25 @@ class OrderPayer(
 
         try {
             submit(orderId, amount, paymentId, createdAt, deadline)
-        } catch (e: RejectedExecutionException) {
+        } catch (e: Exception) {
             paymentService.releaseReservation()
-            rejectedPaymentsCounter.increment()
+            if (e is RejectedExecutionException) rejectedPaymentsCounter.increment()
             throw e
         }
         return createdAt
     }
 
     private fun submit(orderId: UUID, amount: Int, paymentId: UUID, createdAt: Long, deadline: Long) {
-        paymentExecutor.execute {
-            val createdEvent = try {
-                paymentESService.create {
-                    it.create(
-                        paymentId,
-                        orderId,
-                        amount
-                    )
-                }
-            } catch (e: Exception) {
-                paymentService.releaseReservation()
-                throw e
-            }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+        val createdEvent = paymentESService.create {
+            it.create(
+                paymentId,
+                orderId,
+                amount
+            )
+        }
+        logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
+        paymentExecutor.execute {
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
     }

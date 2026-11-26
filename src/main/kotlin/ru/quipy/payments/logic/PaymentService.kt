@@ -28,7 +28,9 @@ interface PaymentService {
  * !!! You can extend the interface with additional methods if needed. !!!
 
  */
-interface PaymentExternalSystemAdapter {
+interface PaymentExternalSystemAdapter : AutoCloseable {
+    override fun close() {}
+
     /**
      * Reserves a place in the account queue if the payment is expected to complete before [deadline].
      * Every successful reservation must be followed by exactly one [performPaymentAsync] or [releaseReservation].
