@@ -77,13 +77,13 @@ class PaymentExternalSystemAdapterImpl(
     private val ongoingWindow = OngoingWindow(parallelRequests)
     private val rateWaiters = ReentrantLock(true)
     private val retryExecutor = ThreadPoolExecutor(
-        1,
-        1,
+        parallelRequests,
+        parallelRequests,
         0L,
         TimeUnit.MILLISECONDS,
         ArrayBlockingQueue<Runnable>(parallelRequests),
         NamedThreadFactory("payment-retry-$accountName"),
-        ThreadPoolExecutor.AbortPolicy(),
+        ThreadPoolExecutor.CallerRunsPolicy(),
     )
 
     private val effectiveParallel = maxOf(
